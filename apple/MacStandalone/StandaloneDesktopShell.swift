@@ -23,6 +23,8 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
     private var desktopHost: NSHostingView<DesktopCardChrome>!
     private var popoverHost: NSHostingController<MenuBarCardChrome>!
     private var popover: NSPopover!
+    private var characterHost: NSHostingController<CharacterPickerChrome>!
+    private var characterPopover: NSPopover!
     private var browser: NSWindow?
     private var statusItem: NSStatusItem!
     private var subscriptions = Set<AnyCancellable>()
@@ -73,7 +75,17 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
         popover.contentViewController = popoverHost
         popover.delegate = self
 
+        characterHost = NSHostingController(rootView: CharacterPickerChrome(model: model) { [weak self] in
+            self?.characterPopover.close()
+        })
+        characterPopover = NSPopover()
+        characterPopover.behavior = .transient
+        characterPopover.animates = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        characterPopover.appearance = NSAppearance(named: .aqua)
+        characterPopover.contentViewController = characterHost
+
         model.onConnect = { [weak self] in self?.openConnection() }
+        model.onChooseCharacter = { [weak self] surface in self?.chooseCharacter(from: surface) }
         model.onPin = { [weak self] pinned in
             self?.applyPin(pinned)
             self?.savePreference(pinned, key: "card.pinned")
@@ -216,6 +228,29 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
     @objc private func connectAction() { openConnection() }
     @objc private func refreshAction() { model.collector.refreshNow() }
 
+    private func chooseCharacter(from surface: StandaloneSurface) {
+        if characterPopover.isShown { characterPopover.performClose(nil); return }
+        let anchor: NSView
+        if surface == .desktop {
+            if !panel.isVisible { showDesktop(reposition: false) }
+            anchor = desktopHost
+        } else {
+            if !popover.isShown { togglePopover() }
+            anchor = popoverHost.view
+        }
+        // This is an explicit click. Activate before presenting a new native
+        // popover so a nonactivating desktop panel cannot leave it AX-only.
+        NSApp.activate(ignoringOtherApps: true)
+        anchor.window?.makeKey()
+        anchor.layoutSubtreeIfNeeded()
+        characterHost.view.layoutSubtreeIfNeeded()
+        characterPopover.contentSize = characterHost.view.fittingSize
+        let bottom = anchor.isFlipped ? anchor.bounds.maxY - 32 : anchor.bounds.minY + 8
+        let button = NSRect(x: anchor.bounds.maxX - 54, y: bottom, width: 30, height: 24)
+        characterPopover.show(relativeTo: button, of: anchor, preferredEdge: .maxX)
+        characterHost.view.window?.makeKey()
+    }
+
     private func openConnection() {
         popover.performClose(nil)
         if browser == nil {
@@ -261,18 +296,32 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
     }
     var shellTestPanel: NSPanel { panel }
     var shellTestPopover: NSPopover { popover }
+    var shellTestCharacterPopover: NSPopover { characterPopover }
+    var shellTestCharacterPickerSharesModel: Bool { characterHost.rootView.model === model }
     var shellTestStatusButton: NSStatusBarButton? { statusItem.button }
     var shellTestSurfacesShareModel: Bool { desktopHost.rootView.model === model && popoverHost.rootView.model === model }
     func shellTestTogglePopover() { togglePopover() }
     func shellTestShowDesktop() { showDesktop(reposition: false) }
     func shellTestResize() { resizeSurfaces() }
+    func shellTestDismissCharacterPicker() { characterHost.rootView.onSelect() }
     func shellTestTearDown() {
+        characterPopover.performClose(nil)
         popover.performClose(nil)
         panel.orderOut(nil)
         NSStatusBar.system.removeStatusItem(statusItem)
         subscriptions.removeAll()
     }
     #endif
+}
+
+private struct CharacterPickerChrome: View {
+    @ObservedObject var model: StandaloneModel
+    let onSelect: () -> Void
+    var body: some View {
+        StandaloneCharacterPicker(model: model, onSelect: onSelect)
+            .environment(\.colorScheme, .light)
+            .background(.white)
+    }
 }
 
 private struct DesktopCardChrome: View {

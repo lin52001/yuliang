@@ -1,7 +1,7 @@
 // Reproducible native UI/model checks. All snapshots and storage are synthetic.
 // The desktop-shell harness briefly opens only its own windows and status item.
 import { spawn } from 'node:child_process';
-import { copyFile, mkdir, mkdtemp, readdir, rm } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -72,7 +72,16 @@ try {
   await run('xcrun', [...linked, ...standalone, harnesses[0], '-o', interaction]);
   await run(interaction, [], 'Standalone互动隔离验证通过：11组。');
 
-  const desktop = path.join(scratch, 'check-desktop-shell');
+  // Use a real test bundle so image-backed characters exercise the same Bundle
+  // lookup and clipping layout as the shipped app, instead of vector fallbacks.
+  const desktopContents = path.join(scratch, 'Yuliang UI Check.app/Contents');
+  await Promise.all([
+    mkdir(path.join(desktopContents, 'MacOS'), { recursive: true }),
+    mkdir(path.join(desktopContents, 'Resources'), { recursive: true }),
+  ]);
+  await copyFile(path.join(apple, 'Resources/original-buddies-v1.png'), path.join(desktopContents, 'Resources/original-buddies-v1.png'));
+  await writeFile(path.join(desktopContents, 'Info.plist'), '<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>CFBundleExecutable</key><string>check-desktop-shell</string><key>CFBundleIdentifier</key><string>com.yuliang.quota.uitest</string><key>CFBundlePackageType</key><string>APPL</string></dict></plist>');
+  const desktop = path.join(desktopContents, 'MacOS/check-desktop-shell');
   await run('xcrun', [...linked, ...standalone, harnesses[1], '-o', desktop]);
   console.log('开始验证真实 AppKit 桌面卡片与菜单栏弹出卡；需要可用的图形会话，失败不会跳过。');
   try {

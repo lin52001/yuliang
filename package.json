@@ -1,6 +1,6 @@
 {
   "name": "yuliang-quota-monitor",
-  "version": "0.12.0",
+  "version": "0.12.1",
   "private": true,
   "type": "module",
   "description": "A tiny native macOS Codex quota widget with original animated buddies.",

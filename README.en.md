@@ -22,7 +22,7 @@ These images and animation use synthetic quota to demonstrate the interface and 
 
 Requires macOS 14 or later and an installed, signed-in official Codex CLI.
 
-1. Open [Releases](https://github.com/liny007915-debug/yuliang/releases). Download `Yuliang-v0.12.0-macOS-arm64.zip` for Apple Silicon or `Yuliang-v0.12.0-macOS-x86_64.zip` for Intel, if that asset is available. Check **Apple menu → About This Mac** if unsure.
+1. Open [Releases](https://github.com/liny007915-debug/yuliang/releases). Download `Yuliang-v0.12.1-macOS-arm64.zip` for Apple Silicon or `Yuliang-v0.12.1-macOS-x86_64.zip` for Intel, if that asset is available. Check **Apple menu → About This Mac** if unsure.
 2. Extract the archive and move `余量.app` to `~/Applications` or `/Applications`.
 3. Open the app. Collection starts automatically; the app has no Dock icon.
 

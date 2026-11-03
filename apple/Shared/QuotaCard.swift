@@ -122,10 +122,15 @@ struct BuddySprite: View {
                     .frame(width: size * 6, height: size * CGFloat(atlas.rowCount))
                     .offset(x: -CGFloat(max(0, min(5, frame))) * size, y: -CGFloat(atlas.row) * size)
                     .frame(width: size, height: size, alignment: .topLeading).clipped()
+                    .allowsHitTesting(false)
             } else {
                 OriginalBuddy(character: character, frame: frame, size: size)
             }
         }
+        // Clipping only trims pixels; constrain the atlas's interaction region
+        // separately so invisible rows cannot cover adjacent character buttons.
+        .frame(width: size, height: size)
+        .contentShape(Rectangle())
         .accessibilityHidden(true)
         .transaction { $0.animation = nil }
     }

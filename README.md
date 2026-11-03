@@ -28,8 +28,8 @@
 
    | Mac 类型 | 文件名 |
    | --- | --- |
-   | Apple Silicon，M 系列芯片 | `Yuliang-v0.12.0-macOS-arm64.zip` |
-   | Intel | `Yuliang-v0.12.0-macOS-x86_64.zip` |
+   | Apple Silicon，M 系列芯片 | `Yuliang-v0.12.1-macOS-arm64.zip` |
+   | Intel | `Yuliang-v0.12.1-macOS-x86_64.zip` |
 
    可在「苹果菜单 → 关于本机」查看芯片类型。只下载 Release 实际提供的文件；没有对应芯片的包时，请使用下面的源码构建方式。
 

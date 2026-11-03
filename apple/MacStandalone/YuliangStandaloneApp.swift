@@ -14,12 +14,12 @@ final class StandaloneModel: ObservableObject {
     @Published var positionLocked = false { didSet { onPositionLock?(positionLocked) } }
     @Published var desktopVisible = true { didSet { onDesktopVisibility?(desktopVisible) } }
     @Published var buddyActivity: BuddyActivity?
-    @Published var choosingCharacter: StandaloneSurface?
     private var clock: AnyCancellable?
     private var lastPlay: BuddyAction = .idle
     let collector: CodexQuotaCollector
     let store: StandaloneQuotaStore
     var onConnect: (() -> Void)?
+    var onChooseCharacter: ((StandaloneSurface) -> Void)?
     var onResize: ((Bool) -> Void)?
     var onPin: ((Bool) -> Void)?
     var onPositionLock: ((Bool) -> Void)?
@@ -131,13 +131,52 @@ private struct WindowDragHandle: NSViewRepresentable {
     let locked: Bool
     final class Handle: NSView {
         var locked = false
+        private var dragStart: (mouse: NSPoint, origin: NSPoint)?
+        // The desktop panel intentionally stays nonactivating. Accept the
+        // initial click so a drag can start while another application is key.
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+        // Keep physical and remote mouse streams on the same AppKit tracking
+        // path instead of handing this region to Window Server dragging.
+        override var mouseDownCanMoveWindow: Bool { false }
         override func mouseDown(with event: NSEvent) {
-            guard !locked else { return }
-            window?.performDrag(with: event)
+            guard !locked, let window, window.isMovable else { dragStart = nil; return }
+            dragStart = (window.convertPoint(toScreen: event.locationInWindow), window.frame.origin)
+            trace("down", event: event)
+        }
+        override func mouseDragged(with event: NSEvent) {
+            guard !locked, let window, window.isMovable, let dragStart else { self.dragStart = nil; return }
+            let mouse = window.convertPoint(toScreen: event.locationInWindow)
+            window.setFrameOrigin(NSPoint(x: dragStart.origin.x + mouse.x - dragStart.mouse.x,
+                                          y: dragStart.origin.y + mouse.y - dragStart.mouse.y))
+            trace("drag", event: event)
+        }
+        override func mouseUp(with event: NSEvent) {
+            trace("up", event: event)
+            dragStart = nil
+            if let window, window.frameAutosaveName != NSWindow.FrameAutosaveName("") {
+                window.saveFrame(usingName: window.frameAutosaveName)
+            }
+        }
+        private func trace(_ phase: String, event: NSEvent) {
+            guard ProcessInfo.processInfo.environment["YULIANG_DRAG_TRACE"] == "1", let window else { return }
+            let line = "\(phase) mouse=\(event.locationInWindow) frame=\(window.frame) locked=\(locked)\n"
+            let url = URL(fileURLWithPath: "/private/tmp/yuliang-drag-trace.log")
+            let data = Data(line.utf8)
+            if FileManager.default.fileExists(atPath: url.path) {
+                if let handle = try? FileHandle(forWritingTo: url) {
+                    defer { try? handle.close() }
+                    _ = try? handle.seekToEnd()
+                    try? handle.write(contentsOf: data)
+                }
+            } else { try? data.write(to: url) }
         }
         override func resetCursorRects() { addCursorRect(bounds, cursor: locked ? .arrow : .openHand) }
     }
-    func makeNSView(context: Context) -> Handle { Handle() }
+    func makeNSView(context: Context) -> Handle {
+        let handle = Handle()
+        handle.identifier = NSUserInterfaceItemIdentifier("yuliang.desktop.dragHandle")
+        return handle
+    }
     func updateNSView(_ nsView: Handle, context: Context) {
         nsView.locked = locked
         nsView.window?.invalidateCursorRects(for: nsView)
@@ -152,12 +191,6 @@ struct StandalonePanelView: View {
         self.model = model; self.collector = model.collector; self.surface = surface
     }
     var accent: Color { QuotaPalette.accent(for: model.document.preferences.character) }
-    private var choosingCharacter: Binding<Bool> {
-        Binding(get: { model.choosingCharacter == surface }, set: { visible in
-            if visible { model.choosingCharacter = surface }
-            else if model.choosingCharacter == surface { model.choosingCharacter = nil }
-        })
-    }
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 8) {
@@ -238,13 +271,10 @@ struct StandalonePanelView: View {
                     .disabled(collector.isBusy).help("立即读取 Codex 额度").accessibilityLabel("立即刷新")
                 Button(action: model.feed) { CookieBiscuit(bitten: false).frame(width: 17, height: 17).frame(maxWidth: .infinity, minHeight: 27) }
                     .disabled(model.isEatingUsage).help("喂一块小饼干，仅互动，不改变真实额度").accessibilityLabel("喂一块饼干")
-                Button { model.choosingCharacter = surface } label: {
+                Button { model.onChooseCharacter?(surface) } label: {
                     Image(systemName: "person.crop.circle.badge.checkmark").frame(maxWidth: .infinity, minHeight: 27)
                 }
                     .help("选择小伙伴 · 当前\(model.document.preferences.character.name)").accessibilityLabel("切换小伙伴")
-                    .popover(isPresented: choosingCharacter, arrowEdge: .bottom) {
-                        StandaloneCharacterPicker(model: model) { model.choosingCharacter = nil }
-                    }
             }.font(.system(size: 12)).foregroundStyle(accent)
 
         }
@@ -261,7 +291,7 @@ struct StandalonePanelView: View {
 struct StandaloneCharacterPicker: View {
     @ObservedObject var model: StandaloneModel
     var onSelect: () -> Void
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 7), count: 3)
+    private var rowCount: Int { (model.availableCharacters.count + 2) / 3 }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
@@ -269,38 +299,55 @@ struct StandaloneCharacterPicker: View {
                 Text("陪你开工，额度仍由 Codex 自动读取")
                     .font(.system(size: 10)).foregroundStyle(.secondary)
             }
-            LazyVGrid(columns: columns, spacing: 7) {
-                ForEach(model.availableCharacters, id: \.self) { character in
-                    let selected = model.document.preferences.character == character
-                    let accent = QuotaPalette.accent(for: character)
-                    Button {
-                        model.selectCharacter(character)
-                        onSelect()
-                    } label: {
-                        VStack(spacing: 3) {
-                            BuddySprite(character: character, frame: selected ? 4 : 0, size: 60)
-                            Text(character.name).font(.system(size: 10, weight: selected ? .semibold : .regular))
-                                .lineLimit(1)
-                        }
-                        .frame(maxWidth: .infinity).padding(.vertical, 7)
-                        .background(selected ? accent.opacity(0.10) : Color.primary.opacity(0.025),
-                                    in: RoundedRectangle(cornerRadius: 12))
-                        .overlay(alignment: .topTrailing) {
-                            if selected {
-                                Image(systemName: "checkmark.circle.fill").font(.system(size: 10))
-                                    .padding(5).foregroundStyle(accent)
+            VStack(spacing: 7) {
+                ForEach(0..<rowCount, id: \.self) { row in
+                    HStack(spacing: 7) {
+                        ForEach(0..<3, id: \.self) { column in
+                            let index = row * 3 + column
+                            if index < model.availableCharacters.count {
+                                characterButton(model.availableCharacters[index])
+                            } else {
+                                Color.clear.frame(width: 82, height: 90).accessibilityHidden(true)
                             }
                         }
-                        .foregroundStyle(QuotaPalette.ink)
                     }
-                    .buttonStyle(.plain).accessibilityLabel(character.name)
-                    .accessibilityValue(selected ? "已选择" : "未选择")
                 }
-            }
+            }.frame(width: 260)
             Text("右键小伙伴，可以挑选互动动作。")
                 .font(.system(size: 10)).foregroundStyle(.secondary)
         }
-        .padding(16).frame(width: 292).background(.white)
+        .padding(16).frame(width: 292)
+        .fixedSize()
+        .background(.white)
+    }
+
+    private func characterButton(_ character: QuotaCharacter) -> some View {
+        let selected = model.document.preferences.character == character
+        let accent = QuotaPalette.accent(for: character)
+        return Button {
+            model.selectCharacter(character)
+            onSelect()
+        } label: {
+            VStack(spacing: 3) {
+                BuddySprite(character: character, frame: selected ? 4 : 0, size: 60)
+                    .allowsHitTesting(false)
+                Text(character.name).font(.system(size: 10, weight: selected ? .semibold : .regular))
+                    .lineLimit(1)
+            }
+            .frame(width: 82, height: 90)
+            .contentShape(Rectangle())
+            .background(selected ? accent.opacity(0.10) : Color.primary.opacity(0.025),
+                        in: RoundedRectangle(cornerRadius: 12))
+            .overlay(alignment: .topTrailing) {
+                if selected {
+                    Image(systemName: "checkmark.circle.fill").font(.system(size: 10))
+                        .padding(5).foregroundStyle(accent)
+                }
+            }
+            .foregroundStyle(QuotaPalette.ink)
+        }
+        .buttonStyle(.plain).accessibilityLabel(character.name)
+        .accessibilityValue(selected ? "已选择" : "未选择")
     }
 }
 

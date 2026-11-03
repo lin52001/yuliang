@@ -17,7 +17,7 @@ struct DesktopShellCheck {
     static func main() {
         do {
             try runChecks()
-            print("PASS desktop shell: borderless, shared model, free drag/position lock, popover lifecycle, fitting size, desktop level, hide/recall; collector stayed paused")
+            print("PASS desktop shell: borderless, shared model, free drag/position lock, visible native character picker, popover lifecycle, fitting size, desktop level, hide/recall; collector stayed paused")
             exit(0)
         } catch {
             fputs("FAIL desktop shell: \(error)\n", stderr)
@@ -39,6 +39,25 @@ struct DesktopShellCheck {
             }
             NSApp.updateWindows()
             RunLoop.current.run(until: Date().addingTimeInterval(0.005))
+        }
+    }
+
+    @MainActor
+    private static func descendant(_ view: NSView, identifier: String) -> NSView? {
+        if view.identifier?.rawValue == identifier { return view }
+        for child in view.subviews {
+            if let found = descendant(child, identifier: identifier) { return found }
+        }
+        return nil
+    }
+
+    @MainActor
+    private static func isOnScreen(_ window: NSWindow?) -> Bool {
+        guard let window, window.isVisible,
+              let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return false }
+        return list.contains { item in
+            (item[kCGWindowNumber as String] as? NSNumber)?.intValue == window.windowNumber
+                && (item[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == ProcessInfo.processInfo.processIdentifier
         }
     }
 
@@ -77,16 +96,75 @@ struct DesktopShellCheck {
         try require(panel.level == .floating, "default desktop card should be floating")
         let compactHeight = panel.frame.height
         try require(panel.frame.width == 320 && compactHeight >= 160 && compactHeight < 380, "compact card has an invalid fitting size")
+        guard let content = panel.contentView,
+              let dragHandle = descendant(content, identifier: "yuliang.desktop.dragHandle") else {
+            throw ShellCheckFailure(description: "desktop drag region has no native mouse event receiver")
+        }
+        try require(dragHandle.bounds.width >= 160 && dragHandle.bounds.height >= 10,
+                    "native drag region does not cover the available header space")
+        try require(dragHandle.acceptsFirstMouse(for: nil), "drag region discards the first mouse event on a nonactivating panel")
+        try require(!dragHandle.mouseDownCanMoveWindow, "header dragging should remain in the AppKit event tracking path")
+        let dragPoint = dragHandle.convert(NSPoint(x: dragHandle.bounds.midX, y: dragHandle.bounds.midY), to: content.superview)
+        try require(content.hitTest(dragPoint) === dragHandle, "native header hit testing sends a drag to another view")
+        let beforeDrag = panel.frame.origin
+        let mouseStart = dragHandle.convert(NSPoint(x: dragHandle.bounds.midX, y: dragHandle.bounds.midY), to: nil)
+        func mouseEvent(_ type: NSEvent.EventType, location: NSPoint) throws -> NSEvent {
+            guard let event = NSEvent.mouseEvent(with: type, location: location, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: panel.windowNumber,
+                context: nil, eventNumber: 1, clickCount: 1, pressure: 1) else {
+                throw ShellCheckFailure(description: "could not construct a local native drag test event")
+            }
+            return event
+        }
+        // Direct calls to this test process's own view validate the tracking
+        // algorithm. No CGEvent posting or operating-system mouse injection.
+        dragHandle.mouseDown(with: try mouseEvent(.leftMouseDown, location: mouseStart))
+        dragHandle.mouseDragged(with: try mouseEvent(.leftMouseDragged, location: NSPoint(x: mouseStart.x - 36, y: mouseStart.y - 22)))
+        dragHandle.mouseUp(with: try mouseEvent(.leftMouseUp, location: mouseStart))
+        try require(abs(panel.frame.minX - beforeDrag.x + 36) < 0.5 && abs(panel.frame.minY - beforeDrag.y + 22) < 0.5,
+                    "native mouseDown/Dragged/Up did not move the card by the requested delta")
         let unlockedFrame = panel.frame
         model.positionLocked = true
         settle()
         try require(!panel.isMovable && !panel.isMovableByWindowBackground, "position lock did not disable AppKit dragging")
+        dragHandle.mouseDown(with: try mouseEvent(.leftMouseDown, location: mouseStart))
+        dragHandle.mouseDragged(with: try mouseEvent(.leftMouseDragged, location: NSPoint(x: mouseStart.x + 45, y: mouseStart.y + 30)))
+        dragHandle.mouseUp(with: try mouseEvent(.leftMouseUp, location: mouseStart))
         try require(panel.frame == unlockedFrame, "locking unexpectedly moved the remembered card position")
         try require(panel.level == .floating, "position lock changed the independent floating preference")
         model.positionLocked = false
         settle()
         try require(panel.isMovable && panel.isMovableByWindowBackground, "unlocking did not restore AppKit dragging")
         try require(panel.frame == unlockedFrame, "unlocking unexpectedly moved the remembered card position")
+        let recordsBeforePicker = model.document.records
+        model.onChooseCharacter?(.desktop)
+        settle(0.6)
+        try require(shell.shellTestCharacterPopover.isShown, "desktop character picker did not open")
+        try require(isOnScreen(shell.shellTestCharacterPopover.contentViewController?.view.window),
+                    "character picker exists in accessibility without a visible native window")
+        try require(shell.shellTestCharacterPickerSharesModel, "native character picker has an independent model")
+        if let output = ProcessInfo.processInfo.environment["YULIANG_UI_ARTIFACTS"],
+           let view = shell.shellTestCharacterPopover.contentViewController?.view {
+            view.layoutSubtreeIfNeeded()
+            view.displayIfNeeded()
+            guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
+                throw ShellCheckFailure(description: "native picker could not allocate a render bitmap")
+            }
+            view.cacheDisplay(in: view.bounds, to: bitmap)
+            guard let png = bitmap.representation(using: .png, properties: [:]) else {
+                throw ShellCheckFailure(description: "native picker render could not produce a PNG")
+            }
+            let directory = URL(fileURLWithPath: output, isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let target = directory.appendingPathComponent("native-character-picker.png")
+            try png.write(to: target)
+            print("Native picker render: \(target.path)")
+        }
+        try require(model.document.records == recordsBeforePicker, "opening character picker changed quota records")
+        shell.shellTestDismissCharacterPicker()
+        settle(0.6)
+        try require(!shell.shellTestCharacterPopover.isShown, "character selection dismissal left the native popover open")
+        try require(panel.isVisible, "character selection dismissal hid the desktop panel")
         model.compact = false
         settle()
         shell.shellTestResize()
@@ -124,6 +202,14 @@ struct DesktopShellCheck {
         try require(panel.isMovable && panel.isMovableByWindowBackground, "shared popover model could not unlock the desktop card")
         try require(abs(shell.shellTestPopover.contentSize.width - 320) <= 1, "popover width is not compact")
         try require(shell.shellTestPopover.contentSize.height >= 160 && shell.shellTestPopover.contentSize.height < 380, "popover has an invalid fitting height")
+        model.onChooseCharacter?(.menuBar)
+        settle(0.6)
+        try require(shell.shellTestCharacterPopover.isShown
+                    && isOnScreen(shell.shellTestCharacterPopover.contentViewController?.view.window),
+                    "menu-bar character picker did not create a visible native window")
+        shell.shellTestDismissCharacterPicker()
+        settle(0.4)
+        try require(model.document.records == recordsBeforePicker, "character picker lifecycle mutated quota records")
         shell.shellTestTogglePopover()
         settle(0.6)
         try require(!shell.shellTestPopover.isShown, "second menu click failed to close popover")

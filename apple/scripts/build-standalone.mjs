@@ -53,6 +53,10 @@ try {
     copyFile(path.join(apple, 'MacStandalone/Info.plist'), path.join(contents, 'Info.plist')),
     copyFile(originalAtlas, path.join(contents, 'Resources/original-buddies-v1.png')),
   ];
+  for (const [source, name] of [['LICENSE', 'LICENSE.txt'], ['ASSETS.md', 'ASSETS.md']]) {
+    const document = path.join(root, source);
+    if (await exists(document)) resources.push(copyFile(document, path.join(contents, 'Resources', name)));
+  }
   // An optional, local-only legacy theme is never included in the public source
   // export. Public release packaging also rejects this private prototype atlas.
   const privateAtlas = path.join(apple, 'Resources/anime-satiety-atlas-v1.png');
