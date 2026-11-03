@@ -22,11 +22,17 @@ These native-interface previews use synthetic quota and Token statistics, not re
 
 ![Synthetic preview of the dark character picker](docs/assets/characters.png)
 
+The separate settings panel stays open for consecutive changes. Close it when finished.
+
+| Settings light | Settings dark |
+| --- | --- |
+| ![Synthetic light settings panel](docs/assets/settings.png) | ![Synthetic dark settings panel](docs/assets/settings-dark.png) |
+
 ## Install
 
 Requires macOS 14 or later and an installed, signed-in official Codex CLI.
 
-1. Open [Releases](https://github.com/liny007915-debug/yuliang/releases). Download `Yuliang-v0.14.0-macOS-arm64.zip` for Apple Silicon or `Yuliang-v0.14.0-macOS-x86_64.zip` for Intel, if that asset is available. Check **Apple menu → About This Mac** if unsure.
+1. Open [Releases](https://github.com/liny007915-debug/yuliang/releases). Download `Yuliang-v0.14.1-macOS-arm64.zip` for Apple Silicon or `Yuliang-v0.14.1-macOS-x86_64.zip` for Intel, if that asset is available. Check **Apple menu → About This Mac** if unsure.
 2. Extract the archive and move `余量.app` to `~/Applications` or `/Applications`.
 3. Open the app. Collection starts automatically; the app has no Dock icon.
 
@@ -62,7 +68,7 @@ The build produces `releases/余量.app` for the current machine's architecture 
 - Set always-on-top or desktop-level placement separately in the settings menu. Always-on-top and position locking are independent.
 - The minus button, or **收起桌面卡片** in settings, hides only the desktop widget. Duo uses the settings option. Background collection continues; show it again or explicitly move it back to the current screen from the popover. This menu action can reposition a locked card.
 - Use the character button to choose the four anime-style themes or five original companions. Your choice is saved locally.
-- Choose **轻巧卡片** or **Duo 圆环** under **小组件样式** in settings. The compact card uses a 12-point rail with a 36-point character. The Duo ring, percentage, and moving character use the same quota value; it does not invent battery or network readings. The choice is saved locally, and switching keeps the window position.
+- Click the text-labelled **设置** button, then choose **轻巧卡片** or **Duo 圆环** under **小组件样式**. The independently sized settings panel shows labelled pages and keeps the choices open for repeated changes. Use Back or Close when finished. The compact card uses a 12-point continuous rail, fine quarter marks and a 36-point character. Duo adds fine scale marks and a subtle inner edge. The ring, percentage, and moving character use the same quota value; it does not invent battery or network readings. The choice is saved locally, and switching keeps the window position.
 - Duo uses a 20-point monochrome menu-bar ring. Click it to open the complete card; hide the desktop widget to use the menu-bar entry alone.
 - Daily and lifetime Token usage are both shown by default. Toggle **日 Token 用量** and **累计 Token 用量** independently under **显示内容** in settings. The card uses one row; Duo uses two narrow rows that collapse independently. Hover or open details for the server's daily date and full numbers. These switches control display only.
 - Select system, light, or dark appearance under **外观**. Appearance and display preferences are saved locally.

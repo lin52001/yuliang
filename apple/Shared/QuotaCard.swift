@@ -410,6 +410,9 @@ struct QuotaRail: View {
         GeometryReader { geometry in
             let layout = QuotaRailGeometry(width: geometry.size.width, avatarSize: size, remainingPercent: isKnown ? progress : nil)
             ZStack(alignment: .leading) {
+                if let trackHeight {
+                    refinedTrack(layout, height: trackHeight)
+                } else {
                 Capsule().fill(accent.opacity(colorScheme == .dark ? 0.12 : 0.065))
                     .frame(height: trackHeight)
                 // Crop a full-size capsule. A narrow capsule becomes a
@@ -427,6 +430,7 @@ struct QuotaRail: View {
                     .foregroundStyle(accent.opacity(0.55))
                     .mask(alignment: .leading) { Rectangle().frame(width: layout.foodClipWidth) }
                 }
+                }
                 if let activity {
                     if let elapsed = activityPreviewElapsed {
                         activeBuddy(activity, elapsed: elapsed, size: layout.avatarSize)
@@ -443,6 +447,38 @@ struct QuotaRail: View {
             }.frame(width: geometry.size.width, height: geometry.size.height, alignment: .leading)
         }
         .accessibilityElement(children: .contain)
+    }
+
+    /// Continuous fill stays measurable; the quiet quarter marks are scale, not
+    /// separate buckets. The end pin and character use the existing geometry.
+    private func refinedTrack(_ layout: QuotaRailGeometry, height: CGFloat) -> some View {
+        ZStack(alignment: .leading) {
+            Capsule().fill(QuotaPalette.track)
+            Capsule().strokeBorder(accent.opacity(colorScheme == .dark ? 0.20 : 0.10), lineWidth: 0.5)
+            if layout.isKnown {
+                Capsule().fill(accent.opacity(colorScheme == .dark ? 0.72 : 0.58))
+                    .overlay(alignment: .top) {
+                        Capsule().fill(QuotaPalette.surface.opacity(colorScheme == .dark ? 0.12 : 0.40))
+                            .frame(height: 1).padding(.horizontal, 3).padding(.top, 1.5)
+                    }
+                    .mask(alignment: .leading) { Rectangle().frame(width: layout.fillWidth) }
+                ForEach(1..<4) { quarter in
+                    Capsule().fill(Double(quarter) * 25 <= progress
+                                   ? QuotaPalette.surface.opacity(0.72) : accent.opacity(0.24))
+                        .frame(width: 1, height: 4)
+                        .offset(x: layout.width * Double(quarter) / 4 - 0.5)
+                }
+                if progress > 0 {
+                    Circle().fill(QuotaPalette.surface)
+                        .overlay { Circle().stroke(accent.opacity(0.85), lineWidth: 1) }
+                        .frame(width: 6, height: 6)
+                        .offset(x: min(max(0, layout.width - 6), max(0, layout.fillWidth - 3)))
+                }
+            }
+        }
+        .frame(height: height)
+        .accessibilityHidden(true)
+        .allowsHitTesting(false)
     }
     @ViewBuilder func activeBuddy(_ activity: BuddyActivity, elapsed: TimeInterval, size: Double) -> some View {
         let active = elapsed.isFinite && elapsed >= 0 && elapsed < activity.duration
@@ -547,7 +583,19 @@ struct QuotaRail: View {
             }
         }.allowsHitTesting(false)
     }
-    func buddy(size: Double, spriteFrame: Int? = nil) -> some View {
+    @ViewBuilder func buddy(size: Double, spriteFrame: Int? = nil) -> some View {
+        #if YULIANG_STANDALONE
+        interactiveBuddy(size: size, spriteFrame: spriteFrame)
+            .overlay {
+                if let onAction {
+                    StandaloneBuddyContextMenu(action: onAction,
+                        enabled: activity.map { !($0.action == .eating && $0.source == .usage
+                            && Date().timeIntervalSince($0.startedAt) < $0.duration) } ?? true)
+                        .accessibilityHidden(true)
+                }
+            }
+            .accessibilityHint(onAction == nil ? "点按回应" : "点按随机回应，右键选择互动动作")
+        #else
         interactiveBuddy(size: size, spriteFrame: spriteFrame)
             .contextMenu {
                 if let onAction {
@@ -558,6 +606,7 @@ struct QuotaRail: View {
                 }
             }
             .accessibilityHint(onAction == nil ? "点按回应" : "点按随机回应，右键选择互动动作")
+        #endif
     }
     @ViewBuilder private func interactiveBuddy(size: Double, spriteFrame: Int?) -> some View {
         if widgetInteraction {
@@ -686,16 +735,36 @@ private struct QuotaDuoGaugeContent: View, Animatable {
 
     var body: some View {
         ZStack {
-            Circle().stroke(accent.opacity(colorScheme == .dark ? 0.19 : 0.12), lineWidth: 4)
+            Path { path in
+                let radius = layout.ringDiameter / 2
+                for tick in 0..<12 {
+                    let angle = Double(tick) / 12 * .pi * 2 - .pi / 2
+                    let inner = radius + 4.5
+                    let outer = inner + (tick % 3 == 0 ? 3 : 1.5)
+                    path.move(to: CGPoint(x: layout.side / 2 + inner * cos(angle),
+                                          y: layout.side / 2 + inner * sin(angle)))
+                    path.addLine(to: CGPoint(x: layout.side / 2 + outer * cos(angle),
+                                             y: layout.side / 2 + outer * sin(angle)))
+                }
+            }.stroke(accent.opacity(layout.isKnown ? 0.30 : 0.16),
+                     style: StrokeStyle(lineWidth: 0.8, lineCap: .round))
+                .accessibilityHidden(true).allowsHitTesting(false)
+            Circle().stroke(QuotaPalette.track, lineWidth: 5)
                 .frame(width: layout.ringDiameter, height: layout.ringDiameter)
                 .accessibilityHidden(true)
             if layout.isKnown {
                 Circle().trim(from: 0, to: layout.progress / 100)
                     .stroke(accent.opacity(presentation.freshness == .fresh ? 0.90 : 0.48),
-                            style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                            style: StrokeStyle(lineWidth: 5, lineCap: .round))
                     .rotationEffect(.degrees(-90))
                     .frame(width: layout.ringDiameter, height: layout.ringDiameter)
                     .accessibilityHidden(true)
+                Circle().trim(from: 0, to: layout.progress / 100)
+                    .stroke(QuotaPalette.surface.opacity(colorScheme == .dark ? 0.18 : 0.46),
+                            style: StrokeStyle(lineWidth: 0.7, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                    .frame(width: layout.ringDiameter - 2, height: layout.ringDiameter - 2)
+                    .accessibilityHidden(true).allowsHitTesting(false)
                 VStack(spacing: 0) {
                     Text(String(format: "%.0f%%", layout.progress))
                         .font(.system(size: layout.side * 0.20, weight: .semibold, design: .rounded))

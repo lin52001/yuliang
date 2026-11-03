@@ -6,6 +6,7 @@ import AppKit
 import CoreGraphics
 import Foundation
 import QuotaCore
+import SwiftUI
 
 private struct ShellCheckFailure: Error, CustomStringConvertible {
     let description: String
@@ -17,7 +18,7 @@ struct DesktopShellCheck {
     static func main() {
         do {
             try runChecks()
-            print("PASS desktop shell: smaller card/Duo styles, icon-only menu status, borderless, shared model, free drag/position lock, visible native character picker, independent Token display, light/dark/system appearance, popover lifecycle, fitting size, desktop level, hide/recall; collector stayed paused")
+            print("PASS desktop shell: independent readable settings panel, persistent continuous controls and callbacks, smaller card/Duo styles, icon-only menu status, borderless, shared model, free drag/position lock, visible native character picker, independent Token display, light/dark/system appearance, popover lifecycle, fitting size, desktop level, hide/recall; collector stayed paused")
             exit(0)
         } catch {
             fputs("FAIL desktop shell: \(error)\n", stderr)
@@ -154,6 +155,232 @@ struct DesktopShellCheck {
     }
 
     @MainActor
+    private static func settingsPanel() throws -> NSPanel {
+        guard let panel = StandaloneSettingsPresenter.shellTestPanel else {
+            throw ShellCheckFailure(description: "settings trigger did not present its independent panel")
+        }
+        try require(isOnScreen(panel) && panel.contentView?.bounds.size == NSSize(width: 260, height: 380),
+                    "settings panel is not visibly rendered at its independent 260-by-380-point size")
+        return panel
+    }
+
+    @MainActor
+    private static func settingsButton(_ id: String, in panel: NSPanel) throws -> NSButton {
+        guard let content = panel.contentView,
+              let button = descendant(content, identifier: "yuliang.settings." + id) as? NSButton else {
+            throw ShellCheckFailure(description: "settings panel lost its real button: \(id)")
+        }
+        let title = button.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let font = button.font ?? .systemFont(ofSize: 13)
+        let textWidth = (title as NSString).size(withAttributes: [.font: font]).width
+        try require(title.count >= 2 && title != "…" && title != "..." && textWidth + 2 <= button.bounds.width,
+                    "settings button is blank, ellipsized or too narrow to draw its complete title: \(id)")
+        try require(!button.isHidden && button.bounds.height >= 28,
+                    "settings button has no usable visible hit region: \(id)")
+        return button
+    }
+
+    @MainActor
+    private static func pressSetting(_ id: String, in panel: NSPanel, staysOpen: Bool = true) throws {
+        let button = try settingsButton(id, in: panel)
+        try require(button.isEnabled, "settings button is unexpectedly disabled: \(id)")
+        button.performClick(nil)
+        settle(0.15)
+        if staysOpen {
+            try require(StandaloneSettingsPresenter.shellTestPanel === panel && isOnScreen(panel),
+                        "choosing a setting dismissed or replaced the independent panel: \(id)")
+        }
+    }
+
+    @MainActor
+    private static func openSettings(on desktop: NSPanel) throws -> NSPanel {
+        guard let content = desktop.contentView,
+              let trigger = descendant(content, identifier: "yuliang.settings.button") as? NSButton else {
+            throw ShellCheckFailure(description: "desktop has no native settings trigger")
+        }
+        try require(trigger.title == "设置" && trigger.bounds.width >= 36 && trigger.bounds.height >= 18,
+                    "settings trigger lost its readable title or usable hit region")
+        trigger.performClick(nil)
+        settle(0.2)
+        return try settingsPanel()
+    }
+
+    @MainActor
+    private static func setting(_ path: [String], shell: StandaloneAppDelegate) throws {
+        let panel = try openSettings(on: shell.shellTestPanel)
+        defer { StandaloneSettingsPresenter.close(); settle(0.2) }
+        guard path.count == 2 else { throw ShellCheckFailure(description: "invalid documented setting path") }
+        let group: [String: String] = ["小组件样式": "styles", "显示内容": "display", "外观": "appearance", "互动": "interactions"]
+        guard let page = group[path[0]] else { throw ShellCheckFailure(description: "unknown setting group") }
+        try pressSetting("nav." + page, in: panel)
+        let key: String?
+        switch page {
+        case "styles": key = ["轻巧卡片": "style.card", "Duo 圆环": "style.duo"][path[1]]
+        case "display": key = ["日 Token 用量": "display.dailyTokens", "累计 Token 用量": "display.lifetimeTokens", "紧凑模式": "display.compact"][path[1]]
+        case "appearance": key = ["跟随系统": "appearance.system", "浅色": "appearance.light", "深色": "appearance.dark"][path[1]]
+        default: key = BuddyAction.interactiveActions.first(where: { $0.label == path[1] }).map { "interaction." + $0.rawValue }
+        }
+        guard let key else { throw ShellCheckFailure(description: "unknown documented setting choice") }
+        try pressSetting(key, in: panel)
+        try pressSetting("close", in: panel, staysOpen: false)
+        try require(StandaloneSettingsPresenter.shellTestPanel == nil && !StandaloneMenuTracking.isActive,
+                    "explicit settings close left a visible or retained settings session")
+    }
+
+    @MainActor
+    private static func checkPersistentSettings(model: StandaloneModel, desktop: NSPanel,
+                                               tokens: TokenUsageSnapshot, prefix: String,
+                                               capturePages: Bool) throws {
+        let records = model.document.records
+        let dailyBefore = model.showDailyTokens
+        let lifetimeBefore = model.showLifetimeTokens
+        let appearanceBefore = model.appearance
+        let panel = try openSettings(on: desktop)
+        defer {
+            StandaloneSettingsPresenter.close()
+            model.showDailyTokens = dailyBefore
+            model.showLifetimeTokens = lifetimeBefore
+            model.appearance = appearanceBefore
+            model.buddyActivity = nil
+            model.now = Date()
+            settle(0.3)
+        }
+        for id in ["styles", "display", "appearance", "windows", "characters", "interactions"] {
+            _ = try settingsButton("nav." + id, in: panel)
+        }
+        try pressSetting("nav.styles", in: panel)
+        let cardChoice = try settingsButton("style.card", in: panel)
+        let duoChoice = try settingsButton("style.duo", in: panel)
+        try require(cardChoice.state == (model.displayStyle == .card ? .on : .off)
+                    && duoChoice.state == (model.displayStyle == .duo ? .on : .off),
+                    "style settings lost their selected state")
+        try pressSetting("back", in: panel)
+        try pressSetting("nav.display", in: panel)
+        let dailyChoice = try settingsButton("display.dailyTokens", in: panel)
+        let lifetimeChoice = try settingsButton("display.lifetimeTokens", in: panel)
+        try require(dailyChoice.state == (dailyBefore ? .on : .off)
+                    && lifetimeChoice.state == (lifetimeBefore ? .on : .off),
+                    "Token settings lost their independent selected states")
+        for _ in 0..<6 {
+            model.now = Date()
+            model.collector.shellTestSetTokenUsage(tokens)
+            settle(0.22)
+            try require(StandaloneSettingsPresenter.shellTestPanel === panel && isOnScreen(panel),
+                        "settings panel disappeared during model or collector publications")
+            _ = try settingsButton("display.dailyTokens", in: panel)
+        }
+        // Both changes happen inside one continuously visible surface.
+        try pressSetting("display.dailyTokens", in: panel)
+        try pressSetting("display.lifetimeTokens", in: panel)
+        try require(model.showDailyTokens != dailyBefore && model.showLifetimeTokens != lifetimeBefore,
+                    "continuous settings selections did not independently change both Token preferences")
+        try pressSetting("display.dailyTokens", in: panel)
+        try pressSetting("display.lifetimeTokens", in: panel)
+        try pressSetting("back", in: panel)
+        try pressSetting("nav.interactions", in: panel)
+        for action in BuddyAction.interactiveActions {
+            _ = try settingsButton("interaction." + action.rawValue, in: panel)
+        }
+        try pressSetting("interaction." + BuddyAction.dance.rawValue, in: panel)
+        try require(model.buddyActivity?.action == .dance && model.buddyActivity?.source == .play,
+                    "settings interaction did not dispatch the selected action")
+        model.buddyActivity = nil
+        try pressSetting("back", in: panel)
+        if capturePages {
+            for (name, appearanceId) in [("light", "light"), ("dark", "dark")] {
+                try pressSetting("nav.appearance", in: panel)
+                try pressSetting("appearance." + appearanceId, in: panel)
+                try require(panel.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == (name == "dark" ? .darkAqua : .aqua),
+                            "settings panel did not apply the selected native appearance")
+                if let content = panel.contentView {
+                    try render(content, named: "native-settings-appearance-\(name).png")
+                }
+                try pressSetting("back", in: panel)
+                if let content = panel.contentView {
+                    try render(content, named: "native-settings-home-\(name).png")
+                }
+                try pressSetting("nav.display", in: panel)
+                if let content = panel.contentView {
+                    try render(content, named: "native-settings-display-\(name).png")
+                }
+                try pressSetting("back", in: panel)
+            }
+        }
+        try pressSetting("close", in: panel, staysOpen: false)
+        try require(!isOnScreen(panel) && StandaloneSettingsPresenter.shellTestPanel == nil && !StandaloneMenuTracking.isActive,
+                    "settings close did not end the independent panel's presentation")
+        try require(model.document.records == records && model.collector.tokenUsage == tokens
+                    && model.collector.tokenUsageLastSuccessAt == tokens.observedAt
+                    && !model.collector.isRunning && model.collector.lastAttemptAt == nil,
+                    "settings interactions changed account data or started a collector query")
+        if capturePages, let content = desktop.contentView,
+           let trigger = descendant(content, identifier: "yuliang.interactions.button") as? NSButton {
+            trigger.performClick(nil)
+            settle(0.2)
+            let actions = try settingsPanel()
+            for action in BuddyAction.interactiveActions {
+                _ = try settingsButton("interaction." + action.rawValue, in: actions)
+            }
+            try pressSetting("interaction." + BuddyAction.dance.rawValue, in: actions)
+            try require(model.buddyActivity?.action == .dance, "interaction trigger did not dispatch its real action button")
+            try pressSetting("close", in: actions, staysOpen: false)
+            model.buddyActivity = nil
+        }
+        guard let content = desktop.contentView,
+              let context = descendant(content, identifier: "yuliang.buddy.contextMenu"),
+              let rightClick = NSEvent.mouseEvent(with: .rightMouseDown, location: .zero, modifierFlags: [],
+                    timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: desktop.windowNumber,
+                    context: nil, eventNumber: 1, clickCount: 1, pressure: 1) else {
+            throw ShellCheckFailure(description: "character has no native contextual interaction receiver")
+        }
+        // Send only to this process's own view; no operating-system event posting.
+        context.rightMouseDown(with: rightClick)
+        settle(0.2)
+        let contextualActions = try settingsPanel()
+        for action in BuddyAction.interactiveActions {
+            _ = try settingsButton("interaction." + action.rawValue, in: contextualActions)
+        }
+        contextualActions.cancelOperation(nil)
+        settle(0.15)
+        try require(StandaloneSettingsPresenter.shellTestPanel == nil && !StandaloneMenuTracking.isActive,
+                    "contextual interaction panel did not close through native Escape cancellation")
+        print("Persistent settings panel verified: \(prefix), complete titles, continuous selections and six model publications")
+    }
+
+    @MainActor
+    private static func renderGaugeBoundaries(now: Date, preferences: QuotaPreferences) throws {
+        let states: [(String, Double?)] = [("empty", 0), ("full", 100), ("unknown", nil)]
+        for dark in [false, true] {
+            for (name, remaining) in states {
+                var selected = preferences
+                selected.windowId = "primary"
+                let snapshot = SnapshotEnvelope(providerId: .codex, pageKind: "rate-limits", observedAt: now,
+                    source: "codex-app-server", windows: [QuotaWindow(id: "primary", label: "5小时额度",
+                        usedPercent: remaining.map { 100 - $0 }, resetAt: now.addingTimeInterval(7_200), observedAt: now)],
+                    id: "synthetic-rail-boundary-\(name)")
+                let document = QuotaStoreDocument(records: [snapshot], preferences: selected)
+                let host = NSHostingView(rootView: VStack(spacing: 12) {
+                    QuotaCard(document: document, now: now, compact: true, minimal: true, slim: true)
+                    QuotaDuoGauge(document: document, now: now)
+                }.padding(12).frame(width: 264).background(QuotaPalette.surface)
+                    .environment(\.colorScheme, dark ? .dark : .light))
+                let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 264, height: 180),
+                                      styleMask: [.borderless], backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false
+                window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                window.contentView = host
+                window.setContentSize(host.fittingSize)
+                window.center()
+                window.orderFrontRegardless()
+                settle(0.1)
+                try require(isOnScreen(window), "synthetic gauge boundary fixture was not rendered on screen")
+                try render(host, named: "native-gauges-\(name)-\(dark ? "dark" : "light").png")
+                window.close()
+            }
+        }
+    }
+
+    @MainActor
     private static func runChecks() throws {
         try checkDuoGeometry()
         let app = NSApplication.shared
@@ -212,6 +439,13 @@ struct DesktopShellCheck {
 
         shell.shellTestShowDesktop()
         settle()
+        if let content = panel.contentView,
+           let trigger = descendant(content, identifier: "yuliang.settings.button") as? NSButton {
+            try require(trigger.title == "设置" && trigger.bounds.width >= 36 && trigger.bounds.height >= 18,
+                        "compact card settings trigger lost its readable title or usable bounds")
+            try checkPersistentSettings(model: model, desktop: panel, tokens: syntheticTokens, prefix: "card", capturePages: true)
+            settle(0.3) // Restore the test's Token preference before measuring fitting size.
+        } else { throw ShellCheckFailure(description: "compact card has no native settings button") }
         try require(model.desktopVisible && panel.isVisible, "desktop card cannot be shown")
         try require(panel.level == .floating, "default desktop card should be floating")
         let compactHeight = panel.frame.height
@@ -223,8 +457,10 @@ struct DesktopShellCheck {
         let allTokensMenuHeight = shell.shellTestPopover.contentSize.height
         guard let tokenCardView = panel.contentView else { throw ShellCheckFailure(description: "card content missing") }
         let bothTokens = try render(tokenCardView, named: "native-main-both-tokens.png")
-        model.showDailyTokens = false
+        try setting(["显示内容", "日 Token 用量"], shell: shell)
         settle(0.3)
+        try require(!model.showDailyTokens && model.showLifetimeTokens,
+                    "native daily Token action changed the wrong display preference")
         let lifetimeOnly = try render(tokenCardView, named: "native-main-lifetime-only.png")
         try require(pixelDifference(bothTokens, lifetimeOnly) > 0.002,
                     "daily switch did not change the actual rendered Token row")
@@ -251,10 +487,18 @@ struct DesktopShellCheck {
         // Changing style resizes the actual native desktop window while the
         // menu popover keeps its full card. Neither surface owns a new reader.
         let beforeDuo = panel.frame
-        model.displayStyle = .duo
+        try setting(["小组件样式", "Duo 圆环"], shell: shell)
         settle(0.4)
+        try require(model.displayStyle == .duo, "native Duo style action did not update the shared model")
         try require(panel.frame.width == 104 && panel.frame.height >= 80,
                     "Duo did not adopt the small icon-style desktop width")
+        if let content = panel.contentView,
+           let trigger = descendant(content, identifier: "yuliang.settings.button") as? NSButton {
+            try require(trigger.title == "设置" && trigger.bounds.width >= 36 && trigger.bounds.height >= 18,
+                        "Duo settings trigger inherited an unreadable icon-only frame")
+            try checkPersistentSettings(model: model, desktop: panel, tokens: syntheticTokens, prefix: "duo", capturePages: false)
+            settle(0.3)
+        } else { throw ShellCheckFailure(description: "Duo has no native settings button") }
         try require(panel.frame.width * panel.frame.height < beforeDuo.width * beforeDuo.height * 0.55,
                     "Duo desktop footprint is not materially smaller than the compact card")
         try require(abs(panel.frame.maxY - beforeDuo.maxY) <= 1 && abs(panel.frame.minX - beforeDuo.minX) <= 1,
@@ -277,7 +521,7 @@ struct DesktopShellCheck {
         let duoLifetimeOnly = try render(tokenCardView, named: "native-duo-lifetime-only.png")
         let duoSingleHeight = panel.frame.height
         try require(duoSingleHeight <= duoBothHeight - 10 && pixelDifference(duoBoth, duoLifetimeOnly) > 0.002,
-                    "Duo daily switch did not remove its own Token row and tighten the native window")
+                    "Duo daily switch did not remove its own Token row and tighten the native window (both=\(duoBothHeight), single=\(duoSingleHeight), fitting=\(tokenCardView.fittingSize.height), tracking=\(StandaloneMenuTracking.isActive))")
         model.showDailyTokens = true
         model.showLifetimeTokens = false
         settle(0.3)
@@ -291,10 +535,10 @@ struct DesktopShellCheck {
                     "Duo left empty Token rows after both counters were hidden")
         model.showDailyTokens = true
         model.showLifetimeTokens = true
-        model.appearance = .light
+        try setting(["外观", "浅色"], shell: shell)
         settle(0.4)
         let duoLight = try render(tokenCardView, named: "native-duo-light.png")
-        model.appearance = .dark
+        try setting(["外观", "深色"], shell: shell)
         settle(0.4)
         let duoDark = try render(tokenCardView, named: "native-duo-dark.png")
         try require(abs(panel.frame.height - duoBothHeight) <= 1 && luminance(duoLight) - luminance(duoDark) > 0.25,
@@ -333,7 +577,7 @@ struct DesktopShellCheck {
         let expectedRestoredX = max(visible.minX, min(beforeRestoringCard.minX, visible.maxX - 264))
         let expectedRestoredY = max(visible.minY, min(beforeRestoringCard.maxY - allTokensHeight,
                                                     visible.maxY - allTokensHeight))
-        model.displayStyle = .card
+        try setting(["小组件样式", "轻巧卡片"], shell: shell)
         settle(0.4)
         try require(!shell.shellTestCharacterPopover.isShown,
                     "style switching left a character popover anchored to the old geometry")
@@ -349,6 +593,14 @@ struct DesktopShellCheck {
                     && !model.collector.isBusy && model.collector.lastAttemptAt == nil
                     && model.collector.tokenUsageLastAttemptAt == nil,
                     "style and icon controls changed account data or started collection")
+        try setting(["互动", BuddyAction.dance.label], shell: shell)
+        try require(model.buddyActivity?.action == .dance && model.buddyActivity?.source == .play,
+                    "settings interaction panel failed to dispatch the chosen play action")
+        try require(model.document.records == originalRecords && model.collector.tokenUsage == syntheticTokens
+                    && model.collector.tokenUsageLastSuccessAt == syntheticTime,
+                    "settings interaction panel modified account readings or their successful observation time")
+        model.buddyActivity = nil
+        try renderGaugeBoundaries(now: syntheticTime, preferences: model.document.preferences)
 
         model.appearance = .light
         model.onConnect?()

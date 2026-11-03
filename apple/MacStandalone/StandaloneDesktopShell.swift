@@ -142,6 +142,10 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
         model.$error.sink { [weak self] _ in self?.scheduleResize() }.store(in: &subscriptions)
         model.collector.$status.sink { [weak self] _ in self?.scheduleResize() }.store(in: &subscriptions)
         model.collector.$tokenUsage.sink { [weak self] _ in self?.scheduleResize() }.store(in: &subscriptions)
+        NotificationCenter.default.publisher(for: StandaloneMenuTracking.didEnd).sink { [weak self] _ in
+            self?.updateStatusItem()
+            self?.scheduleResize()
+        }.store(in: &subscriptions)
         createMenu()
         if showOnLaunch { showDesktop(reposition: false) }
         else { model.desktopVisible = false }
@@ -264,6 +268,8 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
     }
 
     private func resizeSurfaces() {
+        // Settings live in an independent panel; widget geometry can update
+        // without replacing a menu anchor or closing the settings surface.
         if let desktopHost, let panel {
             desktopHost.layoutSubtreeIfNeeded()
             let fitting = desktopHost.fittingSize
@@ -332,7 +338,10 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
         showDesktop(reposition: true)
         return true
     }
-    func applicationWillTerminate(_ notification: Notification) { model?.collector.pause() }
+    func applicationWillTerminate(_ notification: Notification) {
+        StandaloneSettingsPresenter.close()
+        model?.collector.pause()
+    }
 
     @objc private func togglePopover() {
         guard let button = statusItem.button else { return }
@@ -429,6 +438,7 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
     func shellTestResize() { resizeSurfaces() }
     func shellTestDismissCharacterPicker() { characterHost.rootView.onSelect() }
     func shellTestTearDown() {
+        StandaloneSettingsPresenter.close()
         characterPopover.performClose(nil)
         popover.performClose(nil)
         panel.orderOut(nil)
