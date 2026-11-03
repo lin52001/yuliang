@@ -1,0 +1,48 @@
+name: macOS checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mac-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    name: Native macOS (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Verify host architecture
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        run: test "$(uname -m)" = "$EXPECTED_ARCH"
+      - name: Check distribution scripts
+        run: npm run check
+      - name: Test snapshot and interaction rules
+        run: npm test
+      - name: Test local Codex protocol (synthetic CLI only)
+        run: npm run check:codex
+      - name: Build and verify native app
+        run: npm run build:mac
+      # check:mac-ui requires a logged-in interactive Mac session. It is an
+      # explicit local acceptance command, not silently skipped by this job.

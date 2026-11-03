@@ -1,0 +1,29 @@
+{
+  "name": "yuliang-quota-monitor",
+  "version": "0.12.0",
+  "private": true,
+  "type": "module",
+  "description": "A tiny native macOS Codex quota widget with original animated buddies.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/liny007915-debug/yuliang.git"
+  },
+  "scripts": {
+    "test": "node apple/scripts/check-core.mjs",
+    "check": "node apple/scripts/check-public.mjs",
+    "check:codex": "node apple/scripts/check-codex-collector.mjs",
+    "check:mac-ui": "node apple/scripts/check-standalone-ui.mjs",
+    "build:mac": "node apple/scripts/build-standalone.mjs",
+    "install:mac": "node apple/scripts/install-standalone.mjs",
+    "release:mac": "node apple/scripts/package-release.mjs",
+    "mac:test": "npm test",
+    "mac:check": "npm run check",
+    "mac:build": "npm run build:mac",
+    "mac:install": "npm run install:mac",
+    "mac:release": "npm run release:mac"
+  }
+}
