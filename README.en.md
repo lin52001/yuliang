@@ -4,7 +4,7 @@ A compact macOS companion for Codex quota and usage. Choose a 264-point card or 
 
 Choose one of four anime-style themes—Star Sugar Dragon Girl, Orange Glow, Blue Whale, or Star Kitty—or five original companions: Mochi Cat, Butter Bunny, Mint Fox, Sesame Bear, and Cloud Sprite. Star Sugar is the default. When a newer, verified quota observation shows consumption, your buddy eats a biscuit and follows the progress bar. Eight interactions include patting, waving, napping, cheering, feeding, jumping, swaying, and spinning. Play never changes quota or Token statistics.
 
-[中文](README.md) · [Downloads](https://github.com/liny007915-debug/yuliang/releases) · [What's new](CHANGELOG.md)
+[中文](README.md) · [Downloads](https://github.com/lin52001/yuliang/releases) · [What's new](CHANGELOG.md)
 
 **Separate licenses:** code and five original vector companions are MIT. The four anime themes require attribution and noncommercial use; Blue Whale follows CC BY-NC-SA 4.0 with attribution to both ZipZipPipe and 上善. The code license does not cover these character images. See [ASSETS.md](ASSETS.md).
 
@@ -32,7 +32,7 @@ The separate settings panel stays open for consecutive changes. Close it when fi
 
 Requires macOS 14 or later and an installed, signed-in official Codex CLI.
 
-1. Open [Releases](https://github.com/liny007915-debug/yuliang/releases). Download `Yuliang-v0.14.1-macOS-arm64.zip` for Apple Silicon or `Yuliang-v0.14.1-macOS-x86_64.zip` for Intel, if that asset is available. Check **Apple menu → About This Mac** if unsure.
+1. Open [Releases](https://github.com/lin52001/yuliang/releases). Download `Yuliang-v0.14.1-macOS-arm64.zip` for Apple Silicon or `Yuliang-v0.14.1-macOS-x86_64.zip` for Intel, if that asset is available. Check **Apple menu → About This Mac** if unsure.
 2. Extract the archive and move `余量.app` to `~/Applications` or `/Applications`.
 3. Open the app. Collection starts automatically; the app has no Dock icon.
 
@@ -52,7 +52,7 @@ Sign in with the ChatGPT account whose subscription quota you want to monitor. Y
 Requires Node.js 20+, Git, and Apple Command Line Tools. No npm runtime dependencies or full Xcode installation are needed. Check `xcode-select -p` and `xcrun swiftc --version`; run `xcode-select --install` only if the tools are missing.
 
 ```sh
-git clone https://github.com/liny007915-debug/yuliang.git
+git clone https://github.com/lin52001/yuliang.git
 cd yuliang
 npm run build:mac
 npm run install:mac
