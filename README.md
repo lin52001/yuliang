@@ -4,7 +4,7 @@
 
 四位拟人主题是星糖龙娘、橘光学姐、蓝鲸少女和星喵少女，另有团子猫、奶油兔、薄荷狐、芝麻熊与云朵精灵。默认伙伴是星糖龙娘。真实额度减少时，小伙伴会吃一块饼干，再沿进度条挪动一点。摸头、招手、小睡、鼓励、喂食、跳跃、摇摆和转圈共八种互动，不修改真实额度或 Token 统计。
 
-[English](README.en.md) · [下载](https://github.com/liny007915-debug/yuliang/releases) · [本次改进](CHANGELOG.md)
+[English](README.en.md) · [下载](https://github.com/lin52001/yuliang/releases) · [本次改进](CHANGELOG.md)
 
 **许可分开看**：代码与五个原创矢量伙伴为 MIT；四个拟人主题需署名、仅限非商业使用，其中蓝鲸少女按 CC BY-NC-SA 4.0 保留 ZipZipPipe 与上善双署名。角色图片不受代码 MIT 许可覆盖，见 [ASSETS.md](ASSETS.md)。
 
@@ -34,7 +34,7 @@
 
 ### 下载应用
 
-1. 打开 [Releases](https://github.com/liny007915-debug/yuliang/releases)，选择对应芯片的安装包。
+1. 打开 [Releases](https://github.com/lin52001/yuliang/releases)，选择对应芯片的安装包。
 
    | Mac 类型 | 文件名 |
    | --- | --- |
@@ -80,7 +80,7 @@ xcrun swiftc --version
 只有尚未安装 Command Line Tools 时，运行 `xcode-select --install`，并完成 Apple 的安装窗口。已有工具无需重复安装。
 
 ```sh
-git clone https://github.com/liny007915-debug/yuliang.git
+git clone https://github.com/lin52001/yuliang.git
 cd yuliang
 npm run build:mac
 npm run install:mac
