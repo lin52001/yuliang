@@ -10,7 +10,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/liny007915-debug/yuliang.git"
+    "url": "https://github.com/lin52001/yuliang.git"
   },
   "scripts": {
     "test": "node apple/scripts/check-core.mjs",
