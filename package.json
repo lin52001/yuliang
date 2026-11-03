@@ -1,9 +1,9 @@
 {
   "name": "yuliang-quota-monitor",
-  "version": "0.12.1",
+  "version": "0.13.0",
   "private": true,
   "type": "module",
-  "description": "A tiny native macOS Codex quota widget with original animated buddies.",
+  "description": "A tiny native macOS Codex quota and token usage widget with original animated buddies.",
   "license": "MIT",
   "engines": {
     "node": ">=20"

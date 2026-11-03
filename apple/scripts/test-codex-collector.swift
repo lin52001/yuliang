@@ -1,4 +1,4 @@
-// Compile with -D QUOTA_COLLECTOR_TESTING and CodexQuotaCollector.swift.
+// Compile with -D QUOTA_COLLECTOR_TESTING and CodexTokenUsage.swift and CodexQuotaCollector.swift.
 // Arguments: <fake-codex-app-server.mjs> <temporary directory> <Node executable>.
 // All processes use that explicit local fixture.
 // No Codex authentication, real server, browser data or application store is read.
@@ -95,7 +95,7 @@ struct CodexCollectorVerification {
                 try await run(script: URL(fileURLWithPath: CommandLine.arguments[1]),
                               directory: URL(fileURLWithPath: CommandLine.arguments[2]),
                               node: URL(fileURLWithPath: CommandLine.arguments[3]))
-                print("Codex Process/Pipe隔离验证通过：9组。全部为本机合成CLI响应，未读取真实认证或真实账户额度。")
+                print("Codex Process/Pipe隔离验证通过：13组。全部为本机合成CLI响应，未读取真实认证或真实账户额度。")
                 exit(0)
             } catch {
                 fputs("Codex采集隔离验证失败：\(error)\n", stderr)
@@ -133,7 +133,15 @@ struct CodexCollectorVerification {
         try check(periodic.latest("primary")?.usedPercent == 35 && periodic.latest("secondary")?.usedPercent == 60,
                   "必须优先codex桶，不得误用legacy 77%或其他model 91%")
         try check(try periodic.events("protocolViolation").isEmpty, "initialize与initialized握手必须先于额度读取")
-        print("✓ 两次真实Process/Pipe RPC约60秒，相同比例更新时间，优先Codex桶")
+        try check(periodic.collector.tokenUsageState == .available, "独立Token用量应在同轮读取成功")
+        try check(periodic.collector.tokenUsage?.lifetimeTokens == 1_234_567
+                  && periodic.collector.tokenUsage?.serverDayTokens == 12_345
+                  && periodic.collector.tokenUsage?.serverDay == "2026-11-02", "日桶必须按服务端日期选择最新，不得按数组顺序")
+        try check(periodic.collector.tokenUsage?.todayTokens == nil, "服务端无时区元数据，不可伪称本地今日")
+        let tokenReads = try periodic.events("tokenReadStarted")
+        try check(tokenReads.count == 2 && zip(firstReads, tokenReads).allSatisfy { $0.pid == $1.pid },
+                  "quota与Token必须共用60秒周期及同一进程，不能额外启动定时器或推理")
+        print("✓ 两次真实Process/Pipe RPC约60秒，quota与Token共进程，优先Codex桶")
 
         for used in [0.0, 100.0] {
             try periodic.control("valid", used: used)
@@ -271,7 +279,125 @@ struct CodexCollectorVerification {
                   "暂停后休眠唤醒不得自行启动")
         print("✓ 模拟休眠通知停止读取，重复唤醒只恢复一次，暂停不被唤醒撤销")
 
+        let fixedNow = Date(timeIntervalSince1970: 1_793_660_000)
+        func parseTokens(_ json: String) throws -> TokenUsageSnapshot {
+            try TokenUsageSnapshot.decode(Data(json.utf8), observedAt: fixedNow)
+        }
+        let large = try parseTokens("{\"summary\":{\"lifetimeTokens\":9007199254740993},\"dailyUsageBuckets\":[{\"startDate\":\"2024-02-29\",\"tokens\":9223372036854775807}]}")
+        try check(large.lifetimeTokens == 9_007_199_254_740_993 && large.serverDayTokens == Int64.max,
+                  "int64不可经Double截断，超53位整数必须精确")
+        let empty = try parseTokens("{\"summary\":{\"lifetimeTokens\":null},\"dailyUsageBuckets\":null}")
+        try check(empty.lifetimeTokens == nil && empty.serverDayTokens == nil && empty.todayTokens == nil,
+                  "未返回值须为unknown，不得变零或从日桶累计")
+        for invalid in [
+            "{\"summary\":{\"lifetimeTokens\":-1}}",
+            "{\"summary\":{\"lifetimeTokens\":1.5}}",
+            "{\"summary\":{\"lifetimeTokens\":true}}",
+            "{\"summary\":{\"lifetimeTokens\":\"12\"}}",
+            "{\"summary\":{\"lifetimeTokens\":9223372036854775808}}",
+            "{\"summary\":null}",
+            "{\"summary\":{},\"dailyUsageBuckets\":[{\"startDate\":\"2026-02-30\",\"tokens\":1}]}",
+            "{\"summary\":{},\"dailyUsageBuckets\":[{\"startDate\":\"2026-11-01\",\"tokens\":1},{\"startDate\":\"2026-11-01\",\"tokens\":2}]}",
+        ] {
+            var rejected = false
+            do { _ = try parseTokens(invalid) } catch { rejected = true }
+            try check(rejected, "负数、非整数、bool、字符串、溢出、非法日期与重复桶必须拒绝")
+        }
+        print("✓ Token白名单解析保持精确int64，null独立未知，非法日期与重复桶拒绝")
+
+        let tokenFailures: [(String, TokenUsageReadingState)] = [
+            ("usageUnsupported", .unsupported), ("usageUnauth", .loginRequired),
+            ("usageRateLimited", .rateLimited), ("usageError", .unavailable),
+            ("usageMissingSummary", .invalid), ("usageInvalidCount", .invalid), ("usageInvalidDate", .invalid),
+        ]
+        for (mode, expectedState) in tokenFailures {
+            let item = try rig(mode)
+            try await item.seed()
+            let prior = item.collector.tokenUsage
+            let priorSuccess = item.collector.tokenUsageLastSuccessAt
+            try item.control(mode, used: 44)
+            if mode == "usageRateLimited" { item.collector.start() }
+            else { item.collector.refreshNow() }
+            try await waitUntil("Token独立失败\(mode)") { !item.collector.isBusy }
+            try check(item.collector.tokenUsage == prior && item.collector.tokenUsageLastSuccessAt == priorSuccess,
+                      "Token失败不得替换旧数值或伪造新更新时间")
+            try check(item.collector.tokenUsageState == expectedState, "Token失败须独立准确分类")
+            try check(item.records.count == 2 && item.latest("primary")?.usedPercent == 44,
+                      "Token不可用不得阻断成功的订阅额度读取")
+            if mode == "usageRateLimited" {
+                try check((item.collector.nextRefreshAt?.timeIntervalSinceNow ?? 0) >= 59.5,
+                          "自动周期不得早于Token429返回后的完整60秒冷却")
+                let before = try item.events("tokenReadStarted").count
+                for _ in 0..<10 { item.collector.refreshNow() }
+                try await Task.sleep(for: .milliseconds(200))
+                try check(try item.events("tokenReadStarted").count == before, "Token429不得被手动刷新绕过")
+            }
+            item.collector.pause()
+        }
+        print("✓ Token不支持、未登录、429、错误及坏字段独立降级，旧样本保留且quota继续")
+
+        let nullTokens = try rig("token-unknown")
+        try await nullTokens.seed()
+        let knownAt = nullTokens.collector.tokenUsageLastSuccessAt
+        try nullTokens.control("usageNull")
+        nullTokens.collector.refreshNow()
+        try await waitUntil("Token null成功响应") { !nullTokens.collector.isBusy }
+        try check(nullTokens.collector.tokenUsage?.lifetimeTokens == nil && nullTokens.collector.tokenUsage?.serverDayTokens == nil
+                  && nullTokens.collector.tokenUsageState == .available
+                  && (nullTokens.collector.tokenUsageLastSuccessAt ?? .distantPast) > (knownAt ?? .distantFuture),
+                  "成功响应的null必须替换旧known，不得沿用过期值")
+        try nullTokens.control("usageMissingBuckets")
+        nullTokens.collector.refreshNow()
+        try await waitUntil("缺日桶仍读取累计") { !nullTokens.collector.isBusy }
+        try check(nullTokens.collector.tokenUsage?.lifetimeTokens == 1_234_567 && nullTokens.collector.tokenUsage?.serverDayTokens == nil,
+                  "缺日桶不能影响累计，不能从累计推算日用量")
+        try nullTokens.control("usageZero")
+        nullTokens.collector.refreshNow()
+        try await waitUntil("Token零值") { !nullTokens.collector.isBusy }
+        try check(nullTokens.collector.tokenUsage?.lifetimeTokens == 0 && nullTokens.collector.tokenUsage?.serverDayTokens == 0,
+                  "真实零值必须保留，不能与unknown混淆")
+        let independent = try rig("invalid-quota-valid-tokens")
+        try independent.control("invalidPercent")
+        independent.collector.refreshNow()
+        try await waitUntil("quota错误但Token成功") { !independent.collector.isBusy }
+        try check(independent.records.isEmpty && independent.collector.lastSuccessAt == nil
+                  && independent.collector.tokenUsageState == .available
+                  && independent.collector.tokenUsage?.lifetimeTokens == 1_234_567,
+                  "quota失败不能丢弃独立成功的Token账号统计")
+        print("✓ Token缺日桶/null/零值及quota失败保持独立，不做百分比或本地今日换算")
+
+        let usageTimeout = try rig("usage-timeout")
+        try await usageTimeout.seed()
+        let previousTokens = usageTimeout.collector.tokenUsage
+        let previousUsageAt = usageTimeout.collector.tokenUsageLastSuccessAt
+        try usageTimeout.control("usageSlow", used: 57)
+        let usageWaitStart = Date()
+        usageTimeout.collector.refreshNow()
+        try await waitUntil("Token接口15秒超时", timeout: 18) { !usageTimeout.collector.isBusy }
+        try check(Date().timeIntervalSince(usageWaitStart) >= 14.7, "Token超时应实际经过15秒")
+        try check(usageTimeout.records.count == 2 && usageTimeout.latest("primary")?.usedPercent == 57,
+                  "Token超时不能丢弃已收到的有效quota")
+        try check(usageTimeout.collector.tokenUsage == previousTokens
+                  && usageTimeout.collector.tokenUsageLastSuccessAt == previousUsageAt
+                  && usageTimeout.collector.tokenUsageState == .unavailable,
+                  "Token超时保留旧样本及真实成功时间")
+        let usagePause = try rig("usage-pause")
+        try await usagePause.seed()
+        let pauseTokens = usagePause.collector.tokenUsage
+        let pauseQuotaCount = usagePause.records.count
+        try usagePause.control("usageSlow")
+        usagePause.collector.refreshNow()
+        try await waitUntil("已开始Token请求") { try usagePause.events("tokenReadStarted").count == 2 }
+        usagePause.collector.pause()
+        try await Task.sleep(for: .milliseconds(300))
+        try check(usagePause.collector.tokenUsage == pauseTokens && usagePause.records.count == pauseQuotaCount,
+                  "暂停后不能发布尚未结束周期的Token或quota")
+        print("✓ Token真实15秒超时仍保留有效quota，暂停隔离未完成周期")
+
         for fixture in rigs {
+            let methods = try fixture.events("rpc").compactMap { $0.method }
+            try check(methods.allSatisfy { ["initialize", "initialized", "account/rateLimits/read", "account/usage/read"].contains($0) },
+                      "只能读取两个账号接口，不得创建thread/turn或推理任务")
             try check(try fixture.events("protocolViolation").isEmpty, "所有合成进程均须遵守初始化顺序且无并发RPC")
         }
         rigs.forEach { $0.collector.pause() }

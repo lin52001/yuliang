@@ -5,6 +5,68 @@ import Testing
 struct BuddyInteractionTests {
     private let now = Date(timeIntervalSince1970: 1_793_649_600)
 
+    @Test func actionChoicesKeepRandomPlaySeparateFromMealsAndRemainCodable() throws {
+        #expect(!BuddyAction.interactiveActions.contains(.idle))
+        #expect(BuddyAction.interactiveActions.contains(.eating))
+        #expect(!BuddyAction.playfulActions.contains(.eating))
+        #expect(!BuddyAction.playfulActions.contains(.idle))
+        for action in [BuddyAction.jump, .dance, .spin] {
+            #expect(BuddyAction.playfulActions.contains(action))
+            #expect(try JSONDecoder().decode(BuddyAction.self, from: JSONEncoder().encode(action)) == action)
+        }
+        for action in BuddyAction.interactiveActions {
+            // Every interaction can finish on its own and has a discoverable control.
+            #expect(action.duration > 0 && action.duration <= 3)
+            #expect(!action.label.isEmpty && !action.symbol.isEmpty)
+            #expect(BuddyAction.playfulActions.filter { $0 != action }.count > 1)
+        }
+        #expect(try JSONDecoder().decode(BuddyAction.self, from: Data("\"pat\"".utf8)) == .pat)
+        #expect(throws: DecodingError.self) {
+            try JSONDecoder().decode(BuddyAction.self, from: Data("\"unknown\"".utf8))
+        }
+    }
+
+    @Test func jumpLandsDanceSwaysAndSpinCompletesADifferentMotion() {
+        let airborne = BuddyAction.jump.motionSample(progress: 0.25)
+        let landed = BuddyAction.jump.motionSample(progress: 0.5)
+        #expect(airborne.verticalOffset < -0.15)
+        #expect(airborne.horizontalOffset == 0 && airborne.rotationDegrees == 0)
+        #expect(abs(landed.verticalOffset) < 0.000_001)
+        #expect(landed.scaleX > 1 && landed.scaleY < 1)
+        let left = BuddyAction.dance.motionSample(progress: 0.25)
+        let right = BuddyAction.dance.motionSample(progress: 0.75)
+        #expect(left.horizontalOffset < 0 && right.horizontalOffset > 0)
+        #expect(left.rotationDegrees < 0 && right.rotationDegrees > 0)
+        let halfTurn = BuddyAction.spin.motionSample(progress: 0.5)
+        #expect(halfTurn.rotationDegrees == 180)
+        #expect(halfTurn.horizontalOffset == 0)
+        #expect(BuddyAction.spin.motionSample(progress: 1) == .rest)
+    }
+
+    @Test func finiteMotionCannotDriftOrContinueAfterAnInteraction() {
+        for action in BuddyAction.allCases {
+            for invalidOrFinished in [-Double.infinity, -1, 0, 1, 2, Double.infinity, Double.nan] {
+                #expect(action.motionSample(progress: invalidOrFinished) == .rest)
+            }
+            for step in 0...120 {
+                let t = Double(step) / 120
+                let sample = action.motionSample(progress: t)
+                let allFinite = [sample.rotationDegrees, sample.horizontalOffset, sample.verticalOffset, sample.scaleX, sample.scaleY].allSatisfy { $0.isFinite }
+                #expect(allFinite)
+                #expect(abs(sample.horizontalOffset) <= 0.055_001)
+                #expect((-0.180_001...0.016_001).contains(sample.verticalOffset))
+                #expect((0.899_999...1.100_001).contains(sample.scaleX))
+                #expect((0.899_999...1.100_001).contains(sample.scaleY))
+                #expect(action.motionSample(progress: t, reduceMotion: true) == .rest)
+            }
+            let finish = action.motionSample(progress: 1 - 0.000_001)
+            #expect(abs(finish.horizontalOffset) < 0.000_1 && abs(finish.verticalOffset) < 0.000_1)
+            #expect(abs(finish.scaleX - 1) < 0.000_1 && abs(finish.scaleY - 1) < 0.000_1)
+            // A full turn and the resting orientation are visually equivalent.
+            #expect(abs(sin(finish.rotationDegrees * .pi / 180)) < 0.000_1)
+        }
+    }
+
     private func value(used: Double? = 20, at offset: TimeInterval = 0,
                        resetOffset: TimeInterval? = 3_600, window: String = "primary",
                        label: String = "7天额度", provider: QuotaProvider = .codex,

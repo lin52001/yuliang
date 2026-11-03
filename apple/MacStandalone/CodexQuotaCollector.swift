@@ -5,7 +5,7 @@ import Darwin
 import CoreFoundation
 import QuotaCore
 
-/// Reads only the official local Codex app-server rate-limit method.
+/// Reads only the official local Codex app-server quota and account token-usage methods.
 /// No auth files, environment keys, cookies, account identity or model/thread requests are read.
 @MainActor
 final class CodexQuotaCollector: NSObject, ObservableObject {
@@ -13,6 +13,12 @@ final class CodexQuotaCollector: NSObject, ObservableObject {
     let interval: TimeInterval = 60
     let isFixture: Bool
     var onSnapshot: ((SnapshotEnvelope) throws -> Void)?
+
+    @Published private(set) var tokenUsage: TokenUsageSnapshot?
+    @Published private(set) var tokenUsageState: TokenUsageReadingState = .unknown
+    @Published private(set) var tokenUsageStatus = "等待读取 Token 用量"
+    @Published private(set) var tokenUsageLastAttemptAt: Date?
+    @Published private(set) var tokenUsageLastSuccessAt: Date?
 
     @Published private(set) var status = "准备连接本机 Codex"
     @Published private(set) var lastAttemptAt: Date?
@@ -135,6 +141,7 @@ final class CodexQuotaCollector: NSObject, ObservableObject {
         isBusy = true
         needsLogin = false
         lastAttemptAt = Date()
+        tokenUsageLastAttemptAt = lastAttemptAt
         status = isFixture ? "正在读取 Codex 合成测试记录" : "正在读取本机 Codex 额度"
         let arguments = isFixture ? fixtureArguments : ["app-server", "--listen", "stdio://"]
         let worker = CodexRateLimitSession(executable: executable, arguments: arguments)
@@ -148,16 +155,19 @@ final class CodexQuotaCollector: NSObject, ObservableObject {
         timeoutTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(15))
             guard !Task.isCancelled, let self, self.cycle == expectedCycle, self.isBusy else { return }
-            self.failAttempt("Codex 读取超时，保留上次记录")
+            self.session?.timeOut()
         }
     }
 
-    private func received(_ result: Result<Data, CodexRPCFailure>) {
-        switch result {
-        case .success(let data):
+    private func received(_ batch: CodexReadBatch) {
+        // Each endpoint has its own success/failure and timestamp. A missing or
+        // unsupported token method never invalidates an otherwise valid quota.
+        receiveTokenUsage(batch.tokenUsage)
+        switch batch.quota {
+        case .success(let sample):
             let snapshot: SnapshotEnvelope
             do {
-                snapshot = try Self.snapshot(from: data, now: Date())
+                snapshot = try Self.snapshot(from: sample.data, now: sample.observedAt)
             } catch CodexRPCFailure.missingCodexBucket {
                 failAttempt("Codex 未返回对应额度，保留上次记录")
                 return
@@ -170,11 +180,15 @@ final class CodexQuotaCollector: NSObject, ObservableObject {
                 try onSnapshot(snapshot)
                 lastSuccessAt = snapshot.observedAt
                 consecutiveFailures = 0
-                throttleUntil = nil
+                if case .failure(.rateLimited) = batch.tokenUsage {
+                    throttleUntil = Date().addingTimeInterval(interval)
+                } else { throttleUntil = nil }
                 finishAttempt()
                 if isRunning {
                     let elapsed = Date().timeIntervalSince(lastAttemptAt ?? Date())
-                    schedule(after: max(0.2, interval - elapsed), message: "已读取 Codex · 目标每 \(Int(interval)) 秒刷新")
+                    let regularDelay = max(0.2, interval - elapsed)
+                    let delay = max(regularDelay, throttleUntil?.timeIntervalSinceNow ?? 0)
+                    schedule(after: delay, message: "已读取 Codex · 目标每 \(Int(interval)) 秒刷新")
                 } else { status = "已完成一次 Codex 额度读取" }
             } catch {
                 failAttempt("本机额度保存失败，保留上次成功记录")
@@ -203,6 +217,52 @@ final class CodexQuotaCollector: NSObject, ObservableObject {
             }
         }
     }
+
+    private func receiveTokenUsage(_ result: Result<CodexRPCSample, CodexRPCFailure>) {
+        switch result {
+        case .success(let sample):
+            do {
+                let value = try TokenUsageSnapshot.decode(sample.data, observedAt: sample.observedAt)
+                tokenUsage = value
+                tokenUsageLastSuccessAt = value.observedAt
+                tokenUsageState = .available
+                tokenUsageStatus = value.lifetimeTokens == nil && value.serverDayTokens == nil
+                    ? "服务端暂未返回 Token 数值" : "已读取账号 Token 用量"
+            } catch {
+                tokenUsageState = .invalid
+                tokenUsageStatus = "Token 字段无法验证，保留上次记录"
+            }
+        case .failure(let failure):
+            switch failure {
+            case .unsupported:
+                tokenUsageState = .unsupported
+                tokenUsageStatus = "本机 Codex 暂不支持 Token 用量读取"
+            case .loginRequired:
+                tokenUsageState = .loginRequired
+                tokenUsageStatus = "Token 用量需要 Codex 账号登录"
+            case .rateLimited:
+                tokenUsageState = .rateLimited
+                tokenUsageStatus = "Token 用量暂时限流，保留上次记录"
+            case .protocolFailure, .oversized, .missingCodexBucket:
+                tokenUsageState = .invalid
+                tokenUsageStatus = "Token 字段无法验证，保留上次记录"
+            case .launchFailed, .unavailable:
+                tokenUsageState = .unavailable
+                tokenUsageStatus = "Token 用量暂时不可读，保留上次记录"
+            }
+        }
+    }
+
+    #if QUOTA_SHELL_TESTING
+    /// Synthetic UI checks only. This entry point is absent from production.
+    func shellTestSetTokenUsage(_ snapshot: TokenUsageSnapshot) {
+        precondition(!isRunning && !isBusy && lastAttemptAt == nil)
+        tokenUsage = snapshot
+        tokenUsageState = .available
+        tokenUsageLastSuccessAt = snapshot.observedAt
+        tokenUsageStatus = "合成 UI 测试数据"
+    }
+    #endif
 
     private func finishAttempt() {
         timeoutTask?.cancel(); timeoutTask = nil
@@ -328,6 +388,16 @@ private enum CodexRPCFailure: Error, Equatable, Sendable {
 
 /// All Process/Pipe state stays on one serial queue. Only bounded JSON data or
 /// a sanitized error crosses back to the main actor; stdout/stderr are never logged.
+private struct CodexRPCSample: Sendable {
+    let data: Data
+    let observedAt: Date
+}
+
+private struct CodexReadBatch: Sendable {
+    let quota: Result<CodexRPCSample, CodexRPCFailure>
+    let tokenUsage: Result<CodexRPCSample, CodexRPCFailure>
+}
+
 private final class CodexRateLimitSession: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.yuliang.codex-rate-limits")
     private let process = Process()
@@ -339,14 +409,15 @@ private final class CodexRateLimitSession: @unchecked Sendable {
     private var totalBytes = 0
     private var initialized = false
     private var finished = false
-    private var completion: (@Sendable (Result<Data, CodexRPCFailure>) -> Void)?
+    private var quotaResult: Result<CodexRPCSample, CodexRPCFailure>?
+    private var completion: (@Sendable (CodexReadBatch) -> Void)?
 
     init(executable: URL, arguments: [String]) {
         self.executable = executable
         self.arguments = arguments
     }
 
-    func start(completion: @escaping @Sendable (Result<Data, CodexRPCFailure>) -> Void) {
+    func start(completion: @escaping @Sendable (CodexReadBatch) -> Void) {
         queue.async { [self] in
             guard !finished else { return }
             self.completion = completion
@@ -372,15 +443,15 @@ private final class CodexRateLimitSession: @unchecked Sendable {
             process.terminationHandler = { [weak self] _ in
                 guard let self else { return }
                 self.queue.async { [self] in
-                    if !self.finished { self.complete(.failure(.unavailable)) }
+                    if !self.finished { self.completeFailure(.unavailable) }
                 }
             }
             do {
                 try process.run()
                 try send(["id": 1, "method": "initialize", "params": ["clientInfo": [
-                    "name": "yuliang_quota", "title": "余量额度小窗", "version": "0.10.1"
+                    "name": "yuliang_quota", "title": "余量额度小窗", "version": "0.13.0"
                 ]]])
-            } catch { complete(.failure(.launchFailed)) }
+            } catch { completeFailure(.launchFailed) }
         }
     }
 
@@ -395,40 +466,66 @@ private final class CodexRateLimitSession: @unchecked Sendable {
 
     private func receive(_ data: Data) {
         guard !finished else { return }
-        guard !data.isEmpty else { complete(.failure(.unavailable)); return }
+        guard !data.isEmpty else { completeFailure(.unavailable); return }
         totalBytes += data.count
-        guard totalBytes <= 1_000_000 else { complete(.failure(.oversized)); return }
+        guard totalBytes <= 1_000_000 else { completeFailure(.oversized); return }
         buffer.append(data)
         while let end = buffer.firstIndex(of: 0x0a) {
             let line = Data(buffer[..<end])
             buffer.removeSubrange(...end)
-            guard line.count <= 100_000 else { complete(.failure(.oversized)); return }
+            guard line.count <= 100_000 else { completeFailure(.oversized); return }
             if line.isEmpty { continue }
             do {
                 guard let object = try JSONSerialization.jsonObject(with: line) as? [String: Any] else { throw CodexRPCFailure.protocolFailure }
                 // Server notifications are not user data and are not retained.
                 guard let id = object["id"] as? NSNumber, CFGetTypeID(id) != CFBooleanGetTypeID() else { continue }
                 if id.intValue == 1 && !initialized {
-                    if let error = object["error"] as? [String: Any] { complete(.failure(classify(error))); return }
+                    if let error = object["error"] as? [String: Any] { completeFailure(classify(error)); return }
                     guard object["result"] is [String: Any] else { throw CodexRPCFailure.protocolFailure }
                     initialized = true
                     try send(["method": "initialized"])
                     try send(["id": 2, "method": "account/rateLimits/read", "params": [:]])
-                } else if id.intValue == 2 && initialized {
-                    if let error = object["error"] as? [String: Any] { complete(.failure(classify(error))); return }
+                } else if id.intValue == 2 && initialized && quotaResult == nil {
+                    if let error = object["error"] as? [String: Any] {
+                        quotaResult = .failure(classify(error))
+                    } else if let result = object["result"] as? [String: Any] {
+                        let quota = result.filter { $0.key == "rateLimitsByLimitId" || $0.key == "rateLimits" }
+                        let bytes = try JSONSerialization.data(withJSONObject: quota)
+                        guard bytes.count <= 100_000 else { throw CodexRPCFailure.oversized }
+                        quotaResult = .success(CodexRPCSample(data: bytes, observedAt: Date()))
+                    } else {
+                        quotaResult = .failure(.protocolFailure)
+                    }
+                    // One shared 60-second cycle and one initialized process.
+                    // No thread id is supplied, and no conversation method is used.
+                    try send(["id": 3, "method": "account/usage/read", "params": [:]])
+                } else if id.intValue == 3 && initialized && quotaResult != nil {
+                    if let error = object["error"] as? [String: Any] { completeFailure(classify(error)); return }
                     guard let result = object["result"] as? [String: Any] else { throw CodexRPCFailure.protocolFailure }
-                    // Discard all non-quota result fields before crossing the worker boundary.
-                    let summary = result.filter { $0.key == "rateLimitsByLimitId" || $0.key == "rateLimits" }
-                    let bytes = try JSONSerialization.data(withJSONObject: summary)
+                    // Retain only account summary metrics and date/token buckets.
+                    // In particular, discard threadUsage, identity and unknown fields.
+                    var usage: [String: Any] = [:]
+                    if let raw = result["summary"] {
+                        if let summary = raw as? [String: Any] {
+                            let fields: Set<String> = ["lifetimeTokens", "peakDailyTokens", "currentStreakDays", "longestStreakDays", "longestRunningTurnSec"]
+                            usage["summary"] = summary.filter { fields.contains($0.key) }
+                        } else { usage["summary"] = raw }
+                    }
+                    if let raw = result["dailyUsageBuckets"] {
+                        if let buckets = raw as? [[String: Any]] {
+                            usage["dailyUsageBuckets"] = buckets.map { $0.filter { $0.key == "startDate" || $0.key == "tokens" } }
+                        } else { usage["dailyUsageBuckets"] = raw }
+                    }
+                    let bytes = try JSONSerialization.data(withJSONObject: usage)
                     guard bytes.count <= 100_000 else { throw CodexRPCFailure.oversized }
-                    complete(.success(bytes))
+                    complete(CodexReadBatch(quota: quotaResult!, tokenUsage: .success(CodexRPCSample(data: bytes, observedAt: Date()))))
                     return
                 }
-            } catch let error as CodexRPCFailure { complete(.failure(error)); return }
-            catch { complete(.failure(.protocolFailure)); return }
+            } catch let error as CodexRPCFailure { completeFailure(error); return }
+            catch { completeFailure(.protocolFailure); return }
             if finished { return }
         }
-        if buffer.count > 100_000 { complete(.failure(.oversized)) }
+        if buffer.count > 100_000 { completeFailure(.oversized) }
     }
 
     private func send(_ object: [String: Any]) throws {
@@ -451,7 +548,15 @@ private final class CodexRateLimitSession: @unchecked Sendable {
         return .unavailable
     }
 
-    private func complete(_ result: Result<Data, CodexRPCFailure>) {
+    func timeOut() {
+        queue.async { [self] in completeFailure(.unavailable) }
+    }
+
+    private func completeFailure(_ failure: CodexRPCFailure) {
+        complete(CodexReadBatch(quota: quotaResult ?? .failure(failure), tokenUsage: .failure(failure)))
+    }
+
+    private func complete(_ result: CodexReadBatch) {
         guard !finished else { return }
         finished = true
         let callback = completion

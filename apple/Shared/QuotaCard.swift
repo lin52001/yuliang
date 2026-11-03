@@ -7,14 +7,30 @@ import UIKit
 #endif
 
 enum QuotaPalette {
-    static let ink = Color(red: 0.18, green: 0.16, blue: 0.22)
+    static let ink = Color.primary
+    static let surface = adaptive(light: (1, 1, 1), dark: (0.105, 0.105, 0.12))
     static let purple = Color(red: 0.42, green: 0.31, blue: 0.56)
     static let pink = Color(red: 0.74, green: 0.31, blue: 0.46)
-    static let track = Color(red: 0.95, green: 0.94, blue: 0.97)
+    static let track = adaptive(light: (0.95, 0.94, 0.97), dark: (0.19, 0.18, 0.22))
+    private static func adaptive(light: (Double, Double, Double), dark: (Double, Double, Double)) -> Color {
+        #if os(macOS)
+        return Color(nsColor: NSColor(name: nil, dynamicProvider: { appearance in
+            let value = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light
+            return NSColor(srgbRed: value.0, green: value.1, blue: value.2, alpha: 1)
+        }))
+        #else
+        return Color(uiColor: UIColor { traits in
+            let value = traits.userInterfaceStyle == .dark ? dark : light
+            return UIColor(red: value.0, green: value.1, blue: value.2, alpha: 1)
+        })
+        #endif
+    }
     static func accent(for character: QuotaCharacter) -> Color {
         guard let value = UInt64(String(character.accentHex.dropFirst()), radix: 16) else { return purple }
-        return Color(red: Double((value >> 16) & 255) / 255,
-                     green: Double((value >> 8) & 255) / 255, blue: Double(value & 255) / 255)
+        let red = Double((value >> 16) & 255) / 255
+        let green = Double((value >> 8) & 255) / 255
+        let blue = Double(value & 255) / 255
+        return adaptive(light: (red, green, blue), dark: (red * 0.65 + 0.35, green * 0.65 + 0.35, blue * 0.65 + 0.35))
     }
 }
 
@@ -27,7 +43,7 @@ struct BuddyActivity: Equatable {
     let startedAt: Date
     let source: BuddyActivitySource
     var consumedPercent: Double? = nil
-    var duration: TimeInterval { action == .eating ? 3.0 : 2.4 }
+    var duration: TimeInterval { action.duration }
     var caption: String {
         switch action {
         case .idle: return "等你一起开工"
@@ -40,6 +56,9 @@ struct BuddyActivity: Equatable {
         case .wave: return "在这里，陪你一起开工"
         case .nap: return "眯一小会儿，马上回来"
         case .celebrate: return "给你一点小小的鼓励"
+        case .jump: return "蹦一下，继续加油"
+        case .dance: return "跟着节拍摇摇摆"
+        case .spin: return "转一圈，元气回来啦"
         }
     }
 }
@@ -146,27 +165,40 @@ private struct BuddyMotionProfile {
     var patScale: Double = 0.045
     var cheerLift: Double = 4
     var chewLift: Double = 0.8
+    var jumpLift: Double = 8
+    var danceAngle: Double = 9
+    var danceSway: Double = 2.4
+    var spinDirection: Double = 1
 
     init(character: QuotaCharacter, illustrated: Bool) {
         switch character {
         case .dragonGirl:
             waveAngle = 7; napAngle = 4; cheerLift = 4.5; mouthY = illustrated ? -0.08 : 0.05
+            jumpLift = 9; danceAngle = 8; danceSway = 2.2
         case .claudeGirl:
             waveAngle = 4; napAngle = 3; patScale = 0.035; cheerLift = 2.5; mouthY = illustrated ? -0.08 : 0.05
+            jumpLift = 6; danceAngle = 5; danceSway = 1.8; spinDirection = -1
         case .deepseekGirl:
             waveAngle = 6; napAngle = 4; cheerLift = 3.5; mouthY = illustrated ? -0.07 : 0.05
+            jumpLift = 7.5; danceAngle = 8; danceSway = 2.5
         case .geminiGirl:
             waveAngle = 10; napAngle = 5; patScale = 0.055; cheerLift = 5; mouthY = illustrated ? -0.08 : 0.05
+            jumpLift = 10; danceAngle = 12; danceSway = 3; spinDirection = -1
         case .cloudSprite:
             waveAngle = 6; napAngle = 4; cheerLift = 3; mouthY = 0.05
+            jumpLift = 8.5; danceAngle = 9; danceSway = 2.8
         case .mochiCat:
             waveAngle = 9; napAngle = 7; patScale = 0.06; cheerLift = 4
+            jumpLift = 7; danceAngle = 11; danceSway = 2.4; spinDirection = -1
         case .butterBunny:
             waveAngle = 7; napAngle = 5; patScale = 0.055; cheerLift = 5
+            jumpLift = 10; danceAngle = 8; danceSway = 2
         case .mintFox:
             waveAngle = 11; napAngle = 6; cheerLift = 4.5
+            jumpLift = 9; danceAngle = 12; danceSway = 3.2; spinDirection = -1
         case .sesameBear:
             waveAngle = 5; napAngle = 4; patScale = 0.035; cheerLift = 2.5; chewLift = 0.5
+            jumpLift = 5; danceAngle = 5; danceSway = 1.4
         case .kuromi, .myMelody: break
         }
     }
@@ -184,10 +216,11 @@ struct QuotaCard: View {
     var activity: BuddyActivity? = nil
     var activityPreviewElapsed: TimeInterval? = nil
     var onAction: ((BuddyAction) -> Void)? = nil
+    var minimal = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
         let value = QuotaPresentation(document: document, now: now)
-        QuotaCardContent(document: document, now: now, compact: compact, reaction: reaction,
+        QuotaCardContent(document: document, now: now, compact: compact, minimal: minimal, reaction: reaction,
                          resourceBundle: resourceBundle, onPat: onPat, widgetInteraction: widgetInteraction,
                          progress: value.remainingPercent ?? 0, isKnown: value.remainingPercent != nil,
                          activity: activity, activityPreviewElapsed: activityPreviewElapsed, onAction: onAction)
@@ -202,6 +235,7 @@ private struct QuotaCardContent: View, Animatable {
     let document: QuotaStoreDocument
     let now: Date
     let compact: Bool
+    let minimal: Bool
     let reaction: Bool
     let resourceBundle: Bundle
     let onPat: (() -> Void)?
@@ -263,14 +297,16 @@ private struct QuotaCardContent: View, Animatable {
         VStack(alignment: .leading, spacing: compact ? 6 : 10) {
             HStack(spacing: compact ? 4 : 6) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(providerName).font(.system(size: compact ? 12 : 13, weight: .semibold))
-                    Text(subtitle).font(.system(size: compact ? 9 : 10)).foregroundStyle(.secondary).lineLimit(1)
+                    Text(minimal ? "订阅额度" : providerName).font(.system(size: compact ? 12 : 13, weight: .semibold))
+                    Text(minimal ? (presentation.window?.label ?? "等待读取") : subtitle)
+                        .font(.system(size: compact ? 9 : 10)).foregroundStyle(.secondary).lineLimit(1)
                 }
                 Circle().fill(presentation.freshness == .fresh ? Color.green : Color.secondary).frame(width: 4, height: 4)
+                    .help(status).accessibilityLabel(status)
                 Spacer(minLength: 0)
                 if compact {
                     HStack(alignment: .firstTextBaseline, spacing: 2) {
-                        Text(remaining == nil ? "待确认" : "余")
+                        Text(remaining == nil ? "待确认" : readingLabel)
                             .font(.system(size: 9)).foregroundStyle(.secondary)
                         readout.font(.system(size: 22, weight: .semibold, design: .rounded))
                     }.fixedSize(horizontal: true, vertical: false)
@@ -286,8 +322,8 @@ private struct QuotaCardContent: View, Animatable {
                       onPat: onPat, widgetInteraction: widgetInteraction, activity: activity, activityPreviewElapsed: activityPreviewElapsed,
                       onAction: onAction)
                 .frame(height: compact ? 48 : 56)
-            if !compact { Text(title).font(.system(size: 12, weight: .medium)).lineLimit(1) }
-            HStack(alignment: .firstTextBaseline) {
+            if !minimal && !compact { Text(title).font(.system(size: 12, weight: .medium)).lineLimit(1) }
+            if !minimal { HStack(alignment: .firstTextBaseline) {
                 Text(used.map { "已用 \(String(format: "%.0f", $0))%" } ?? "已用量未知")
                 Spacer(minLength: 3)
                 if let date = presentation.observedAt {
@@ -308,6 +344,7 @@ private struct QuotaCardContent: View, Animatable {
                         Text("重置 \(reset, style: .time)")
                     }
                 }.font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+            }
             }
         }.foregroundStyle(QuotaPalette.ink)
     }
@@ -333,6 +370,7 @@ struct QuotaRail: View {
     var activityPreviewElapsed: TimeInterval?
     var onAction: ((BuddyAction) -> Void)?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorScheme) private var colorScheme
 
     init(remainingPercent: Double?, character: QuotaCharacter, frame: Int, accent: Color,
          size: CGFloat, resourceBundle: Bundle = .main, onPat: (() -> Void)? = nil,
@@ -354,10 +392,10 @@ struct QuotaRail: View {
         GeometryReader { geometry in
             let layout = QuotaRailGeometry(width: geometry.size.width, avatarSize: size, remainingPercent: isKnown ? progress : nil)
             ZStack(alignment: .leading) {
-                Capsule().fill(accent.opacity(0.065))
+                Capsule().fill(accent.opacity(colorScheme == .dark ? 0.12 : 0.065))
                 // Crop a full-size capsule. A narrow capsule becomes a
                 // vertical pill at low percentages, which misrepresents the track.
-                Capsule().fill(accent.opacity(0.13))
+                Capsule().fill(accent.opacity(colorScheme == .dark ? 0.24 : 0.13))
                     .mask(alignment: .leading) { Rectangle().frame(width: layout.fillWidth) }
                 if layout.isKnown {
                     HStack(spacing: 0) {
@@ -387,29 +425,79 @@ struct QuotaRail: View {
         .accessibilityElement(children: .contain)
     }
     @ViewBuilder func activeBuddy(_ activity: BuddyActivity, elapsed: TimeInterval, size: Double) -> some View {
-        let active = elapsed < activity.duration
-        let t = min(1, max(0, elapsed / activity.duration))
-        let wave = sin(t * .pi * 6)
+        let active = elapsed.isFinite && elapsed >= 0 && elapsed < activity.duration
+        let t = elapsed.isFinite ? min(1, max(0, elapsed / max(0.001, activity.duration))) : 1
         let eating = active && activity.action == .eating
         let animatedFrame: Int = !active ? frame : eating ? 5 : activity.action == .nap ? 3 : 4
-        let angle: Double = !active || reduceMotion ? 0 : activity.action == .wave ? wave * motion.waveAngle : activity.action == .nap ? -motion.napAngle * sin(t * .pi) : 0
-        let lift: Double = !active || reduceMotion ? 0 : activity.action == .celebrate ? -abs(wave) * motion.cheerLift : eating ? -abs(wave) * motion.chewLift : 0
-        let scale: Double = !active || reduceMotion ? 1 : activity.action == .pat ? 1 + motion.patScale * sin(t * .pi) : 1
+        let sample = active ? activity.action.motionSample(progress: t, reduceMotion: reduceMotion) : .rest
+        let transform = adaptedMotion(sample, action: activity.action, size: size)
         ZStack {
             buddy(size: size, spriteFrame: animatedFrame)
-                .rotationEffect(.degrees(angle)).scaleEffect(scale).offset(y: lift)
+                .rotationEffect(.degrees(transform.angle))
+                .scaleEffect(x: transform.scaleX, y: transform.scaleY, anchor: activity.action == .jump ? .bottom : .center)
+                .offset(x: transform.x, y: transform.y)
             if active {
                 if eating {
                     feedingBiscuit(elapsed: elapsed, duration: activity.duration, size: size)
                 } else {
-                    Image(systemName: activity.action == .nap ? "zzz" : activity.action == .pat ? "heart.fill" : activity.action == .wave ? "sparkle" : "star.fill")
-                        .font(.system(size: size * 0.21, weight: .semibold)).foregroundStyle(accent)
-                        .offset(x: size * 0.32, y: -size * 0.34 + (reduceMotion ? 0 : -3 * sin(t * .pi)))
-                        .opacity(reduceMotion ? 1 : sin(min(1, t * 3) * .pi / 2) * min(1, (1 - t) * 5))
-                        .allowsHitTesting(false)
+                    actionFeedback(activity.action, progress: t, size: size)
                 }
             }
         }.frame(width: size, height: size)
+    }
+    private func adaptedMotion(_ sample: BuddyMotionSample, action: BuddyAction, size: Double)
+        -> (angle: Double, x: Double, y: Double, scaleX: Double, scaleY: Double) {
+        var angle = sample.rotationDegrees
+        var x = sample.horizontalOffset * size
+        var y = sample.verticalOffset * size
+        var scaleX = sample.scaleX
+        var scaleY = sample.scaleY
+        switch action {
+        case .wave: angle *= motion.waveAngle / 8
+        case .nap: angle *= motion.napAngle / 5
+        case .eating: y = sample.verticalOffset / 0.014 * motion.chewLift
+        case .celebrate: y = sample.verticalOffset / 0.08 * motion.cheerLift
+        case .pat:
+            scaleX = 1 + (sample.scaleX - 1) / 0.045 * motion.patScale
+            scaleY = 1 + (sample.scaleY - 1) / 0.045 * motion.patScale
+        case .jump:
+            y = sample.verticalOffset / 0.18 * motion.jumpLift
+        case .dance:
+            angle *= motion.danceAngle / 10
+            x = sample.horizontalOffset / 0.055 * motion.danceSway
+        case .spin: angle *= motion.spinDirection
+        case .idle: break
+        }
+        return (angle, x, y, scaleX, scaleY)
+    }
+    @ViewBuilder private func actionFeedback(_ action: BuddyAction, progress t: Double, size: Double) -> some View {
+        let fade = reduceMotion ? 1 : sin(min(1, t * 3) * .pi / 2) * min(1, (1 - t) * 5)
+        let flourish = reduceMotion ? 0 : sin(t * .pi)
+        Group {
+            if action == .celebrate {
+                ForEach(0..<3) { index in
+                    Image(systemName: "star.fill")
+                        .font(.system(size: size * (index == 1 ? 0.17 : 0.12), weight: .semibold))
+                        .offset(x: Double(index - 1) * size * (0.22 + 0.12 * flourish),
+                                y: -size * (index == 1 ? 0.39 : 0.23) - 3 * flourish)
+                }
+            } else if action == .dance {
+                ForEach(0..<2) { index in
+                    Image(systemName: index == 0 ? "music.note" : "music.quarternote.3")
+                        .font(.system(size: size * 0.19, weight: .semibold))
+                        .rotationEffect(.degrees(index == 0 ? -12 : 12))
+                        .offset(x: (index == 0 ? -1 : 1) * size * 0.36,
+                                y: -size * 0.22 - (reduceMotion ? 0 : 3 * sin(t * .pi * 4 + Double(index) * .pi)))
+                }
+            } else {
+                let symbol = action == .pat ? "heart.fill" : action == .wave ? "sparkle" : action == .nap ? "zzz" : action.symbol
+                Image(systemName: symbol)
+                    .font(.system(size: size * 0.21, weight: .semibold))
+                    .offset(x: action == .spin && !reduceMotion ? cos(t * .pi * 2) * size * 0.34 : size * 0.32,
+                            y: action == .spin && !reduceMotion ? -size * 0.15 + sin(t * .pi * 2) * size * 0.34 : -size * 0.34 - 3 * flourish)
+            }
+        }
+        .foregroundStyle(accent).opacity(fade).allowsHitTesting(false).accessibilityHidden(true)
     }
     func feedingBiscuit(elapsed: TimeInterval, duration: TimeInterval, size: Double) -> some View {
         let t = min(1, max(0, elapsed / duration))
@@ -441,15 +529,13 @@ struct QuotaRail: View {
         interactiveBuddy(size: size, spriteFrame: spriteFrame)
             .contextMenu {
                 if let onAction {
-                    Button("摸摸头", systemImage: "hand.raised.fill") { onAction(.pat) }
-                    Button("招招手", systemImage: "hand.wave.fill") { onAction(.wave) }
-                    Button("小睡一下", systemImage: "moon.zzz.fill") { onAction(.nap) }
-                    Button("给点鼓励", systemImage: "sparkles") { onAction(.celebrate) }
-                    Divider()
-                    Button("喂一口饼干", systemImage: "fork.knife") { onAction(.eating) }
+                    ForEach(BuddyAction.interactiveActions, id: \.self) { action in
+                        if action == .eating { Divider() }
+                        Button(action.label, systemImage: action.symbol) { onAction(action) }
+                    }
                 }
             }
-            .accessibilityHint(onAction == nil ? "点按回应" : "点按随机回应，菜单可选择摸头、招手、小睡、鼓励或喂食")
+            .accessibilityHint(onAction == nil ? "点按回应" : "点按随机回应，右键选择互动动作")
     }
     @ViewBuilder private func interactiveBuddy(size: Double, spriteFrame: Int?) -> some View {
         if widgetInteraction {

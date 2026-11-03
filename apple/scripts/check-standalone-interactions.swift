@@ -177,12 +177,14 @@ struct StandaloneInteractionVerification {
             let rig = try InteractionRig(parent: directory, name: "tap-and-switch")
             try rig.accept(rig.snapshot(80))
             let records = rig.model.document.records
-            let allowed: Set<BuddyAction> = [.pat, .wave, .nap, .celebrate]
+            let allowed = Set(BuddyAction.playfulActions)
+            try expect(allowed.isSuperset(of: [.jump, .dance, .spin]), "随机互动池应包含新增的跳跃、摇摆和转圈")
+            try expect(!allowed.contains(.eating) && !allowed.contains(.idle), "随机点击不能制造进食或空闲事件")
             var last: BuddyAction?
             for _ in 0..<12 {
                 rig.model.pat()
                 let action = rig.model.buddyActivity?.action
-                try expect(action.map { allowed.contains($0) } == true, "点击应从四种互动中选择")
+                try expect(action.map { allowed.contains($0) } == true, "点击应从可选娱乐动作中选择")
                 try expect(action != last, "连续点击不能重复同一动作")
                 last = action
             }
@@ -247,11 +249,13 @@ struct StandaloneInteractionVerification {
             let rig = try InteractionRig(parent: directory, name: "explicit-play")
             try rig.accept(rig.snapshot(80))
             let records = rig.model.document.records
-            let actions: [BuddyAction] = [.pat, .wave, .nap, .celebrate, .eating]
+            let actions = BuddyAction.interactiveActions
+            try expect(Set(actions).isSuperset(of: [.jump, .dance, .spin, .eating]), "显式动作菜单应包含新增动作和喂食")
             for action in actions {
                 rig.model.play(action)
                 try expect(rig.model.buddyActivity?.action == action, "显式互动按钮应播放所选动作")
                 try expect(rig.model.buddyActivity?.source == .play, "显式互动必须标为娱乐")
+                try expect(rig.model.buddyActivity?.duration == action.duration, "每种动作应按其有限时长结束")
                 try expect(rig.model.document.records == records, "显式互动不能改额度与采样时间")
                 try expect(try rig.model.store.read().records == records, "显式互动不能向磁盘写入假消耗")
             }

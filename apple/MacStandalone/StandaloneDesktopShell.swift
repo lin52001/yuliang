@@ -43,11 +43,14 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
             if defaults.object(forKey: "card.pinned") != nil { model.pinned = defaults.bool(forKey: "card.pinned") }
             if defaults.object(forKey: "card.compact") != nil { model.compact = defaults.bool(forKey: "card.compact") }
             if defaults.object(forKey: "card.positionLocked") != nil { model.positionLocked = defaults.bool(forKey: "card.positionLocked") }
+            if defaults.object(forKey: "display.dailyTokens") != nil { model.showDailyTokens = defaults.bool(forKey: "display.dailyTokens") }
+            if defaults.object(forKey: "display.lifetimeTokens") != nil { model.showLifetimeTokens = defaults.bool(forKey: "display.lifetimeTokens") }
+            if let raw = defaults.string(forKey: "card.appearance"), let appearance = StandaloneAppearance(rawValue: raw) { model.appearance = appearance }
         }
         panel = QuotaFloatingPanel(contentRect: NSRect(x: 0, y: 0, width: 320, height: 260),
                                   styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.title = "余量 · 桌面卡片"
-        panel.appearance = NSAppearance(named: .aqua)
+        panel.appearance = model.appearance.nativeAppearance
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = true
@@ -71,7 +74,7 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
         popover = NSPopover()
         popover.behavior = .transient
         popover.animates = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        popover.appearance = NSAppearance(named: .aqua)
+        popover.appearance = model.appearance.nativeAppearance
         popover.contentViewController = popoverHost
         popover.delegate = self
 
@@ -81,7 +84,7 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
         characterPopover = NSPopover()
         characterPopover.behavior = .transient
         characterPopover.animates = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        characterPopover.appearance = NSAppearance(named: .aqua)
+        characterPopover.appearance = model.appearance.nativeAppearance
         characterPopover.contentViewController = characterHost
 
         model.onConnect = { [weak self] in self?.openConnection() }
@@ -100,6 +103,18 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
         }
         model.onDesktopVisibility = { [weak self] visible in self?.setDesktopVisible(visible) }
         model.onShowDesktop = { [weak self] in self?.showDesktop(reposition: true) }
+        model.onDisplayChange = { [weak self] in
+            guard let self else { return }
+            self.savePreference(self.model.showDailyTokens, key: "display.dailyTokens")
+            self.savePreference(self.model.showLifetimeTokens, key: "display.lifetimeTokens")
+            self.scheduleResize()
+        }
+        model.onAppearance = { [weak self] appearance in
+            guard let self else { return }
+            self.applyAppearance(appearance)
+            if self.persistsPreferences { UserDefaults.standard.set(appearance.rawValue, forKey: "card.appearance") }
+        }
+        applyAppearance(model.appearance)
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.title = "余量"
@@ -113,6 +128,7 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
         }.store(in: &subscriptions)
         model.$error.sink { [weak self] _ in self?.scheduleResize() }.store(in: &subscriptions)
         model.collector.$status.sink { [weak self] _ in self?.scheduleResize() }.store(in: &subscriptions)
+        model.collector.$tokenUsage.sink { [weak self] _ in self?.scheduleResize() }.store(in: &subscriptions)
         createMenu()
         if showOnLaunch { showDesktop(reposition: false) }
         else { model.desktopVisible = false }
@@ -122,6 +138,15 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
 
     private func savePreference(_ value: Bool, key: String) {
         if persistsPreferences { UserDefaults.standard.set(value, forKey: key) }
+    }
+
+    private func applyAppearance(_ appearance: StandaloneAppearance) {
+        NSApp.appearance = appearance.nativeAppearance
+        panel?.appearance = appearance.nativeAppearance
+        popover?.appearance = appearance.nativeAppearance
+        characterPopover?.appearance = appearance.nativeAppearance
+        browser?.appearance = appearance.nativeAppearance
+        scheduleResize()
     }
 
     private func applyPin(_ pinned: Bool) {
@@ -254,11 +279,11 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
     private func openConnection() {
         popover.performClose(nil)
         if browser == nil {
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 430, height: 400),
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 430, height: 520),
                                   styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
-            window.title = "余量 · Codex 额度"
-            window.appearance = NSAppearance(named: .aqua)
-            window.contentView = NSHostingView(rootView: StandaloneConnectionView(model: model).environment(\.colorScheme, .light))
+            window.title = "余量 · 用量与额度"
+            window.appearance = model.appearance.nativeAppearance
+            window.contentView = NSHostingView(rootView: StandaloneConnectionView(model: model))
             window.isReleasedWhenClosed = false
             window.center()
             browser = window
@@ -272,7 +297,7 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
         let app = NSMenuItem()
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "找回桌面卡片", action: #selector(showPanel), keyEquivalent: "0").target = self
-        appMenu.addItem(withTitle: "Codex 额度详情", action: #selector(connectAction), keyEquivalent: "l").target = self
+        appMenu.addItem(withTitle: "用量与额度详情", action: #selector(connectAction), keyEquivalent: "l").target = self
         appMenu.addItem(withTitle: "立即刷新", action: #selector(refreshAction), keyEquivalent: "r").target = self
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "退出余量", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
@@ -294,6 +319,7 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
         persistsPreferences = false
         configure(model: model, startCollector: false, showOnLaunch: false)
     }
+    var shellTestConnectionWindow: NSWindow? { browser }
     var shellTestPanel: NSPanel { panel }
     var shellTestPopover: NSPopover { popover }
     var shellTestCharacterPopover: NSPopover { characterPopover }
@@ -319,8 +345,8 @@ private struct CharacterPickerChrome: View {
     let onSelect: () -> Void
     var body: some View {
         StandaloneCharacterPicker(model: model, onSelect: onSelect)
-            .environment(\.colorScheme, .light)
-            .background(.white)
+            .preferredColorScheme(model.appearance.colorScheme)
+            .background(QuotaPalette.surface)
     }
 }
 
@@ -328,8 +354,8 @@ private struct DesktopCardChrome: View {
     @ObservedObject var model: StandaloneModel
     var body: some View {
         StandalonePanelView(model: model, surface: .desktop)
-            .environment(\.colorScheme, .light)
-            .background(.white)
+            .preferredColorScheme(model.appearance.colorScheme)
+            .background(QuotaPalette.surface)
             .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
 
     }
@@ -339,7 +365,7 @@ private struct MenuBarCardChrome: View {
     @ObservedObject var model: StandaloneModel
     var body: some View {
         StandalonePanelView(model: model, surface: .menuBar)
-            .environment(\.colorScheme, .light)
+            .preferredColorScheme(model.appearance.colorScheme)
     }
 }
 

@@ -11,15 +11,26 @@ const scratch = await mkdtemp(path.join(tmpdir(), 'yuliang-codex-collector-'));
 const cache = path.join(scratch, 'module-cache');
 await mkdir(cache);
 
-async function run(command, args, extraEnv = {}) {
+async function run(command, args, extraEnv = {}, completionMarker) {
   await new Promise((resolve, reject) => {
     const child = spawn(command, args, {
-      cwd: root, stdio: 'inherit',
+      cwd: root, stdio: ['inherit', 'pipe', 'inherit'],
       env: { ...process.env, CLANG_MODULE_CACHE_PATH: cache, ...extraEnv }
     });
+    let output = '';
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', chunk => {
+      process.stdout.write(chunk);
+      output = (output + chunk).slice(-100_000);
+    });
     child.once('error', reject);
-    child.once('exit', (code, signal) => code === 0 ? resolve() :
-      reject(new Error(`${path.basename(command)} 验证失败（${signal ?? code}）。`)));
+    child.once('close', (code, signal) => {
+      if (code !== 0) return reject(new Error(`${path.basename(command)} 验证失败（${signal ?? code}）。`));
+      if (completionMarker && !output.includes(completionMarker)) {
+        return reject(new Error(`${path.basename(command)} 未报告完整验证结果，不能将提前退出视为通过。`));
+      }
+      resolve();
+    });
   });
 }
 
@@ -32,9 +43,9 @@ try {
     '-emit-module-path', path.join(scratch, 'QuotaCore.swiftmodule'), '-o', path.join(scratch, 'libQuotaCore.dylib')]);
   const executable = path.join(scratch, 'test-codex-collector');
   await run('xcrun', [...base, '-D', 'QUOTA_COLLECTOR_TESTING', '-I', scratch, '-L', scratch, '-lQuotaCore',
-    'MacStandalone/CodexQuotaCollector.swift', 'scripts/test-codex-collector.swift', '-o', executable]);
+    'MacStandalone/CodexTokenUsage.swift', 'MacStandalone/CodexQuotaCollector.swift', 'scripts/test-codex-collector.swift', '-o', executable]);
   await run(executable, [path.join(root, 'scripts/fixtures/fake-codex-app-server.mjs'), scratch, process.execPath],
-    { DYLD_LIBRARY_PATH: scratch });
+    { DYLD_LIBRARY_PATH: scratch }, 'Codex Process/Pipe隔离验证通过：13组。');
 } finally {
   // Allow terminated fake CLI children to finish their local evidence log before cleanup.
   await new Promise(resolve => setTimeout(resolve, 200));

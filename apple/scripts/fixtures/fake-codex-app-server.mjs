@@ -30,6 +30,42 @@ rl.on('line', line => {
     return;
   }
   if (request.method === 'initialized') { initialized = true; return; }
+  if (request.method === 'account/usage/read') {
+    if (!initialized || readInFlight) {
+      event('protocolViolation', { reason: !initialized ? 'usage-before-initialized' : 'concurrent-usage' });
+      fail(request.id, -32000, 'Synthetic protocol violation');
+      return;
+    }
+    readInFlight = true;
+    event('tokenReadStarted', { mode: state.mode });
+    const deliverUsage = () => {
+      readInFlight = false;
+      event('tokenReadDelivered', { mode: state.mode });
+      if (state.mode === 'usageUnsupported') { fail(request.id, -32601, 'Synthetic method not found'); return; }
+      if (state.mode === 'usageUnauth') { fail(request.id, 401, 'Authentication required'); return; }
+      if (state.mode === 'usageRateLimited') { fail(request.id, 429, 'Too many requests'); return; }
+      if (state.mode === 'usageError') { fail(request.id, -32000, 'Synthetic usage failure'); return; }
+      const summary = { lifetimeTokens: state.lifetimeTokens ?? 1234567, peakDailyTokens: 45678,
+        currentStreakDays: 8, longestStreakDays: 14, longestRunningTurnSec: 540 };
+      let dailyUsageBuckets = [
+        { startDate: '2026-11-02', tokens: 12345 },
+        { startDate: '2026-11-01', tokens: 9876 },
+      ];
+      if (state.mode === 'usageNull') { for (const key of Object.keys(summary)) summary[key] = null; dailyUsageBuckets = null; }
+      if (state.mode === 'usageZero') { summary.lifetimeTokens = 0; dailyUsageBuckets = [{ startDate: '2026-11-03', tokens: 0 }]; }
+      if (state.mode === 'usageInvalidCount') summary.lifetimeTokens = -1;
+      if (state.mode === 'usageInvalidDate') dailyUsageBuckets[0].startDate = '2026-02-30';
+      const result = { summary, dailyUsageBuckets,
+        // These unknown fields must never be retained by the account-usage parser.
+        threadUsage: { threadId: 'synthetic-private-thread', groups: [{ model: 'ignored', inputTokens: 999999 }] },
+        email: 'synthetic-not-retained@example.invalid' };
+      if (state.mode === 'usageMissingSummary') delete result.summary;
+      if (state.mode === 'usageMissingBuckets') delete result.dailyUsageBuckets;
+      send(request.id, result);
+    };
+    if (state.mode === 'usageSlow') setTimeout(deliverUsage, 20000); else deliverUsage();
+    return;
+  }
   if (request.method !== 'account/rateLimits/read') {
     if (request.id != null) fail(request.id, -32601, 'Synthetic method not found');
     return;

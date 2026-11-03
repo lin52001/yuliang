@@ -48,6 +48,7 @@ try {
   const standalone = [
     'Shared/OriginalBuddy.swift',
     'Shared/QuotaCard.swift',
+    'MacStandalone/CodexTokenUsage.swift',
     'MacStandalone/CodexQuotaCollector.swift',
     'MacStandalone/StandaloneQuotaStore.swift',
     'MacStandalone/YuliangStandaloneApp.swift',
