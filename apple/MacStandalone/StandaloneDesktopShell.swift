@@ -29,6 +29,7 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
     private var statusItem: NSStatusItem!
     private var subscriptions = Set<AnyCancellable>()
     private var resizeScheduled = false
+    private var lastStatusSignature: String?
     private let frameName = NSWindow.FrameAutosaveName("YuliangDesktopCardV1")
     private var persistsPreferences = true
 
@@ -46,8 +47,11 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
             if defaults.object(forKey: "display.dailyTokens") != nil { model.showDailyTokens = defaults.bool(forKey: "display.dailyTokens") }
             if defaults.object(forKey: "display.lifetimeTokens") != nil { model.showLifetimeTokens = defaults.bool(forKey: "display.lifetimeTokens") }
             if let raw = defaults.string(forKey: "card.appearance"), let appearance = StandaloneAppearance(rawValue: raw) { model.appearance = appearance }
+            if let raw = defaults.string(forKey: "card.displayStyle"), let style = StandaloneDisplayStyle(rawValue: raw) { model.displayStyle = style }
         }
-        panel = QuotaFloatingPanel(contentRect: NSRect(x: 0, y: 0, width: 320, height: 260),
+        panel = QuotaFloatingPanel(contentRect: NSRect(x: 0, y: 0,
+                                                     width: StandaloneLayout.desktopWidth(style: model.displayStyle, compact: model.compact),
+                                                     height: 180),
                                   styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.title = "余量 · 桌面卡片"
         panel.appearance = model.appearance.nativeAppearance
@@ -114,17 +118,26 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
             self.applyAppearance(appearance)
             if self.persistsPreferences { UserDefaults.standard.set(appearance.rawValue, forKey: "card.appearance") }
         }
+        model.onStyleChange = { [weak self] in
+            guard let self else { return }
+            self.characterPopover?.close()
+            if self.persistsPreferences {
+                UserDefaults.standard.set(self.model.displayStyle.rawValue, forKey: "card.displayStyle")
+            }
+            self.updateStatusItem()
+            self.scheduleResize()
+        }
         applyAppearance(model.appearance)
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.button?.title = "余量"
-        statusItem.button?.toolTip = "余量 · 点击查看 Codex 额度"
         statusItem.button?.target = self
         statusItem.button?.action = #selector(togglePopover)
         model.$document.sink { [weak self] document in
-            let value = QuotaPresentation(document: document)
-            self?.statusItem.button?.title = value.remainingPercent.map { "余 \(Int($0.rounded()))%" } ?? "余量"
+            self?.updateStatusItem(document: document)
             self?.scheduleResize()
+        }.store(in: &subscriptions)
+        model.$now.sink { [weak self] date in
+            self?.updateStatusItem(now: date)
         }.store(in: &subscriptions)
         model.$error.sink { [weak self] _ in self?.scheduleResize() }.store(in: &subscriptions)
         model.collector.$status.sink { [weak self] _ in self?.scheduleResize() }.store(in: &subscriptions)
@@ -138,6 +151,82 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
 
     private func savePreference(_ value: Bool, key: String) {
         if persistsPreferences { UserDefaults.standard.set(value, forKey: key) }
+    }
+
+    private func updateStatusItem(document: QuotaStoreDocument? = nil, now: Date? = nil) {
+        guard let statusItem else { return }
+        let value = QuotaPresentation(document: document ?? model.document, now: now ?? model.now)
+        let percent = value.remainingPercent.map { "\(Int($0.rounded()))%" } ?? "未知"
+        let reading: String
+        switch value.freshness {
+        case .fresh: reading = value.remainingPercent == nil ? "额度未提供" : "剩余 \(percent)"
+        case .missing: reading = "等待读取额度"
+        case .stale: reading = "上次剩余 \(percent) · 记录已陈旧"
+        case .resetDue: reading = "上次剩余 \(percent) · 重置待核对"
+        }
+        let updated = value.observedAt.map { $0.formatted(date: .abbreviated, time: .standard) } ?? "尚未读取"
+        let tooltip = "余量 · Codex\n\(value.window?.label ?? "订阅额度") · \(reading)\n额度更新 \(updated)\n点击查看用量与操作"
+        let signature = "\(model.displayStyle.rawValue)/\(tooltip)"
+        guard signature != lastStatusSignature else { return }
+        // A fixed/variable-length transition may cause AppKit to refresh the
+        // status button. Obtain its current instance after changing the item.
+        let length = model.displayStyle == .duo ? CGFloat(24) : NSStatusItem.variableLength
+        if statusItem.length != length { statusItem.length = length }
+        guard let button = statusItem.button else { return }
+        button.toolTip = tooltip
+        button.setAccessibilityLabel("余量，Codex，\(reading)，点击查看用量与操作")
+        if model.displayStyle == .duo {
+            button.imagePosition = .imageOnly
+            button.title = ""
+            button.image = Self.statusRingImage(remaining: value.remainingPercent,
+                                                fresh: value.freshness == .fresh)
+        } else {
+            button.imagePosition = .noImage
+            button.image = nil
+            button.title = value.remainingPercent.map { "余 \(Int($0.rounded()))%" } ?? "余量"
+        }
+        lastStatusSignature = signature
+        #if QUOTA_SHELL_TESTING
+        print("Shell status style=\(model.displayStyle.rawValue) hasTitle=\(!button.title.isEmpty) hasImage=\(button.image != nil) imagePosition=\(button.imagePosition.rawValue)")
+        #endif
+    }
+
+    /// An authored quota glyph. It represents quota only, never device battery
+    /// or network status. Template rendering follows the actual menu-bar theme.
+    private static func statusRingImage(remaining: Double?, fresh: Bool) -> NSImage {
+        let known = remaining.flatMap { $0.isFinite && (0...100).contains($0) ? $0 : nil }
+        let image = NSImage(size: NSSize(width: 20, height: 20), flipped: false) { bounds in
+            let center = NSPoint(x: bounds.midX, y: bounds.midY)
+            let radius: CGFloat = 7.5
+            let ring = NSBezierPath(ovalIn: NSRect(x: center.x - radius, y: center.y - radius,
+                                                 width: radius * 2, height: radius * 2))
+            ring.lineWidth = 1.6
+            NSColor.black.withAlphaComponent(known == nil ? 0.5 : 0.22).setStroke()
+            if known == nil { ring.setLineDash([1.3, 1.8], count: 2, phase: 0) }
+            ring.stroke()
+            if let known, known > 0 {
+                let arc = NSBezierPath()
+                arc.lineWidth = 1.6
+                arc.lineCapStyle = .round
+                if !fresh { arc.setLineDash([2.2, 1.8], count: 2, phase: 0) }
+                arc.appendArc(withCenter: center, radius: radius, startAngle: 90,
+                              endAngle: CGFloat(90 - known * 3.6), clockwise: true)
+                NSColor.black.setStroke()
+                arc.stroke()
+            }
+            let text = known.map { String(Int($0.rounded())) } ?? "?"
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: NSFont.monospacedDigitSystemFont(ofSize: 6.5, weight: .semibold),
+                .foregroundColor: NSColor.black
+            ]
+            let label = NSAttributedString(string: text, attributes: attributes)
+            let size = label.size()
+            label.draw(at: NSPoint(x: center.x - size.width / 2, y: center.y - size.height / 2))
+            return true
+        }
+        image.isTemplate = true
+        image.accessibilityDescription = "Codex 剩余额度"
+        return image
     }
 
     private func applyAppearance(_ appearance: StandaloneAppearance) {
@@ -179,17 +268,22 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
             desktopHost.layoutSubtreeIfNeeded()
             let fitting = desktopHost.fittingSize
             let old = panel.frame
-            let size = NSSize(width: 320, height: max(160, ceil(fitting.height)))
+            let size = NSSize(width: StandaloneLayout.desktopWidth(style: model.displayStyle, compact: model.compact),
+                              height: max(StandaloneLayout.minimumHeight(style: model.displayStyle), ceil(fitting.height)))
             if abs(old.height - size.height) > 0.5 || old.width != size.width {
                 panel.setContentSize(size)
                 panel.setFrameOrigin(NSPoint(x: old.minX, y: old.maxY - size.height))
                 keepCardOnScreen()
+                if persistsPreferences, panel.frameAutosaveName != NSWindow.FrameAutosaveName("") {
+                    panel.saveFrame(usingName: panel.frameAutosaveName)
+                }
             }
         }
         if let popoverHost, let popover {
             popoverHost.view.layoutSubtreeIfNeeded()
             let fitting = popoverHost.view.fittingSize
-            popover.contentSize = NSSize(width: 320, height: max(160, ceil(fitting.height)))
+            popover.contentSize = NSSize(width: StandaloneLayout.cardWidth(compact: model.compact),
+                                        height: max(StandaloneLayout.minimumHeight(style: .card), ceil(fitting.height)))
         }
     }
 
@@ -270,8 +364,12 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
         anchor.layoutSubtreeIfNeeded()
         characterHost.view.layoutSubtreeIfNeeded()
         characterPopover.contentSize = characterHost.view.fittingSize
-        let bottom = anchor.isFlipped ? anchor.bounds.maxY - 32 : anchor.bounds.minY + 8
-        let button = NSRect(x: anchor.bounds.maxX - 54, y: bottom, width: 30, height: 24)
+        let buttonWidth = min(CGFloat(24), anchor.bounds.width)
+        let buttonHeight = min(CGFloat(22), anchor.bounds.height)
+        let x = max(anchor.bounds.minX, anchor.bounds.maxX - buttonWidth - 10)
+        let desiredY = anchor.isFlipped ? anchor.bounds.maxY - buttonHeight - 6 : anchor.bounds.minY + 6
+        let y = min(max(anchor.bounds.minY, desiredY), anchor.bounds.maxY - buttonHeight)
+        let button = NSRect(x: x, y: y, width: buttonWidth, height: buttonHeight)
         characterPopover.show(relativeTo: button, of: anchor, preferredEdge: .maxX)
         characterHost.view.window?.makeKey()
     }
@@ -356,7 +454,8 @@ private struct DesktopCardChrome: View {
         StandalonePanelView(model: model, surface: .desktop)
             .preferredColorScheme(model.appearance.colorScheme)
             .background(QuotaPalette.surface)
-            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: model.displayStyle == .duo ? 24 : 18,
+                                        style: .continuous))
 
     }
 }

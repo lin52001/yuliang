@@ -17,7 +17,7 @@ struct DesktopShellCheck {
     static func main() {
         do {
             try runChecks()
-            print("PASS desktop shell: borderless, shared model, free drag/position lock, visible native character picker, independent Token display, light/dark/system appearance, popover lifecycle, fitting size, desktop level, hide/recall; collector stayed paused")
+            print("PASS desktop shell: smaller card/Duo styles, icon-only menu status, borderless, shared model, free drag/position lock, visible native character picker, independent Token display, light/dark/system appearance, popover lifecycle, fitting size, desktop level, hide/recall; collector stayed paused")
             exit(0)
         } catch {
             fputs("FAIL desktop shell: \(error)\n", stderr)
@@ -122,7 +122,40 @@ struct DesktopShellCheck {
     }
 
     @MainActor
+    private static func checkDuoGeometry() throws {
+        // Clockwise cardinal points catch reversed rings, full/empty endpoint
+        // discontinuities and sprites that protrude beyond the authored frame.
+        let points: [(Double, CGFloat, CGFloat)] = [
+            (0, 40, 16), (25, 64, 40), (50, 40, 64), (75, 16, 40), (100, 40, 16)
+        ]
+        for (percent, x, y) in points {
+            let layout = QuotaDuoGeometry(size: 80, remainingPercent: percent)
+            try require(layout.isKnown && layout.progress == percent
+                        && abs(layout.markerX - x) < 0.001 && abs(layout.markerY - y) < 0.001,
+                        "Duo ring does not place a known percentage on the expected clockwise endpoint")
+            let half = layout.avatarSize / 2
+            try require(layout.markerX >= half && layout.markerX <= layout.side - half
+                        && layout.markerY >= half && layout.markerY <= layout.side - half,
+                        "Duo marker bounds can clip the character at a cardinal endpoint")
+        }
+        let invalidValues: [Double?] = [nil, Double.nan, Double.infinity, -Double.infinity, -1, 100.1]
+        for value in invalidValues {
+            let layout = QuotaDuoGeometry(size: 80, remainingPercent: value)
+            try require(!layout.isKnown && layout.progress == 0
+                        && layout.markerX == 40 && layout.markerY == 40,
+                        "unknown or invalid quota became a fabricated ring value")
+        }
+        for size in [CGFloat.nan, .infinity, -.infinity, -10, 0] {
+            let layout = QuotaDuoGeometry(size: size, remainingPercent: 25)
+            try require(layout.side.isFinite && layout.side >= 64 && layout.ringDiameter.isFinite
+                        && layout.markerX.isFinite && layout.markerY.isFinite,
+                        "invalid Duo size produced non-finite or unusably small geometry")
+        }
+    }
+
+    @MainActor
     private static func runChecks() throws {
+        try checkDuoGeometry()
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
         app.finishLaunching()
@@ -130,6 +163,9 @@ struct DesktopShellCheck {
             .appendingPathComponent("yuliang-desktop-shell-check-\(UUID().uuidString)", isDirectory: true)
         let model = StandaloneModel(store: StandaloneQuotaStore(directory: directory))
         try require(model.showDailyTokens && model.showLifetimeTokens, "both Token counters should be enabled by default")
+        try require(model.displayStyle == .card, "existing installations should start in the familiar card style")
+        try require(model.availableCharacters.count == 9 && Set(model.availableCharacters).count == 9,
+                    "the public build should expose nine distinct selectable characters")
         let syntheticTime = Date()
         let syntheticQuota = SnapshotEnvelope(providerId: .codex, pageKind: "rate-limits", observedAt: syntheticTime,
             source: "codex-app-server", windows: [
@@ -179,7 +215,8 @@ struct DesktopShellCheck {
         try require(model.desktopVisible && panel.isVisible, "desktop card cannot be shown")
         try require(panel.level == .floating, "default desktop card should be floating")
         let compactHeight = panel.frame.height
-        try require(panel.frame.width == 320 && compactHeight >= 160 && compactHeight < 380, "compact card has an invalid fitting size")
+        try require(panel.frame.width == 264 && compactHeight >= 100 && compactHeight < 215,
+                    "compact card did not become smaller than the previous 320-by-215-point surface")
         // Visibility preferences alter rendered rows and fitting size only.
         // The same paused collector and both underlying readings stay intact.
         let allTokensHeight = panel.frame.height
@@ -210,6 +247,108 @@ struct DesktopShellCheck {
         try require(abs(panel.frame.height - allTokensHeight) <= 1
                     && abs(shell.shellTestPopover.contentSize.height - allTokensMenuHeight) <= 1,
                     "restoring both Token values did not restore natural card sizing")
+
+        // Changing style resizes the actual native desktop window while the
+        // menu popover keeps its full card. Neither surface owns a new reader.
+        let beforeDuo = panel.frame
+        model.displayStyle = .duo
+        settle(0.4)
+        try require(panel.frame.width == 104 && panel.frame.height >= 80,
+                    "Duo did not adopt the small icon-style desktop width")
+        try require(panel.frame.width * panel.frame.height < beforeDuo.width * beforeDuo.height * 0.55,
+                    "Duo desktop footprint is not materially smaller than the compact card")
+        try require(abs(panel.frame.maxY - beforeDuo.maxY) <= 1 && abs(panel.frame.minX - beforeDuo.minX) <= 1,
+                    "switching from card to Duo moved the remembered top-left position")
+        try require(abs(shell.shellTestPopover.contentSize.width - 264) <= 1,
+                    "Duo mode incorrectly shrank the detailed menu popover to icon width")
+        guard let statusButton = shell.shellTestStatusButton else {
+            throw ShellCheckFailure(description: "Duo status button is missing")
+        }
+        try require(statusButton.title.isEmpty && statusButton.image?.isTemplate == true,
+                    "Duo menu-bar status should be a template icon without a text label")
+        try require((statusButton.image?.size.width ?? 0) <= 24 && (statusButton.image?.size.height ?? 0) <= 24,
+                    "Duo status icon no longer fits the normal menu-bar icon size")
+        try require(!(statusButton.toolTip ?? "").isEmpty, "icon-only menu status lost its accessible quota description")
+        let duoBothHeight = panel.frame.height
+        let duoBoth = try render(tokenCardView, named: "native-duo-both-tokens.png")
+        try render(statusButton, named: "native-duo-menubar-icon.png")
+        model.showDailyTokens = false
+        settle(0.3)
+        let duoLifetimeOnly = try render(tokenCardView, named: "native-duo-lifetime-only.png")
+        let duoSingleHeight = panel.frame.height
+        try require(duoSingleHeight <= duoBothHeight - 10 && pixelDifference(duoBoth, duoLifetimeOnly) > 0.002,
+                    "Duo daily switch did not remove its own Token row and tighten the native window")
+        model.showDailyTokens = true
+        model.showLifetimeTokens = false
+        settle(0.3)
+        let duoDailyOnly = try render(tokenCardView, named: "native-duo-daily-only.png")
+        try require(abs(panel.frame.height - duoSingleHeight) <= 1 && pixelDifference(duoDailyOnly, duoLifetimeOnly) > 0.001,
+                    "Duo single-counter choices are not independently rendered at the same natural size")
+        model.showDailyTokens = false
+        settle(0.3)
+        try render(tokenCardView, named: "native-duo-no-tokens.png")
+        try require(panel.frame.height <= duoBothHeight - 24,
+                    "Duo left empty Token rows after both counters were hidden")
+        model.showDailyTokens = true
+        model.showLifetimeTokens = true
+        model.appearance = .light
+        settle(0.4)
+        let duoLight = try render(tokenCardView, named: "native-duo-light.png")
+        model.appearance = .dark
+        settle(0.4)
+        let duoDark = try render(tokenCardView, named: "native-duo-dark.png")
+        try require(abs(panel.frame.height - duoBothHeight) <= 1 && luminance(duoLight) - luminance(duoDark) > 0.25,
+                    "Duo did not restore both counters or change its native pixels for dark mode")
+        guard let duoContent = panel.contentView,
+              let duoDrag = descendant(duoContent, identifier: "yuliang.desktop.dragHandle") else {
+            throw ShellCheckFailure(description: "Duo has no discoverable native drag handle")
+        }
+        try require(duoDrag.bounds.width >= 40 && duoDrag.bounds.height >= 10 && duoDrag.acceptsFirstMouse(for: nil),
+                    "Duo drag handle is too small or discards the initial click")
+        model.desktopVisible = false
+        settle(0.2)
+        shell.shellTestTogglePopover()
+        settle(0.3)
+        try require(!panel.isVisible && shell.shellTestPopover.isShown
+                    && abs(shell.shellTestPopover.contentSize.width - 264) <= 1,
+                    "hiding Duo prevented the menu icon from opening the full compact card")
+        if let view = shell.shellTestPopover.contentViewController?.view {
+            try render(view, named: "native-duo-menubar-card.png")
+        }
+        model.onShowDesktop?()
+        settle(0.3)
+        try require(panel.isVisible && model.desktopVisible && model.displayStyle == .duo
+                    && panel.frame.width == 104 && !shell.shellTestPopover.isShown,
+                    "menu recall lost the Duo style or failed to restore the desktop icon")
+        model.onChooseCharacter?(.desktop)
+        settle(0.4)
+        try require(shell.shellTestCharacterPopover.isShown
+                    && isOnScreen(shell.shellTestCharacterPopover.contentViewController?.view.window),
+                    "Duo cannot anchor a visible native character picker")
+        let beforeRestoringCard = panel.frame
+        guard let restoringScreen = panel.screen else {
+            throw ShellCheckFailure(description: "Duo window has no screen for restoring the wider card")
+        }
+        let visible = restoringScreen.visibleFrame
+        let expectedRestoredX = max(visible.minX, min(beforeRestoringCard.minX, visible.maxX - 264))
+        let expectedRestoredY = max(visible.minY, min(beforeRestoringCard.maxY - allTokensHeight,
+                                                    visible.maxY - allTokensHeight))
+        model.displayStyle = .card
+        settle(0.4)
+        try require(!shell.shellTestCharacterPopover.isShown,
+                    "style switching left a character popover anchored to the old geometry")
+        try require(panel.frame.width == 264 && abs(panel.frame.height - allTokensHeight) <= 1,
+                    "returning from Duo failed to restore the original compact card fitting size")
+        try require(abs(panel.frame.minX - expectedRestoredX) <= 1
+                    && abs(panel.frame.minY - expectedRestoredY) <= 1 && visible.contains(panel.frame),
+                    "returning from right-edge Duo failed to preserve its top anchor and keep the wider card on screen")
+        try require(shell.shellTestStatusButton?.image == nil && !(shell.shellTestStatusButton?.title ?? "").isEmpty,
+                    "returning to card style failed to restore text menu-bar status")
+        try require(ObjectIdentifier(model.collector) == collectorIdentity && model.document.records == originalRecords
+                    && model.collector.tokenUsage == syntheticTokens && !model.collector.isRunning
+                    && !model.collector.isBusy && model.collector.lastAttemptAt == nil
+                    && model.collector.tokenUsageLastAttemptAt == nil,
+                    "style and icon controls changed account data or started collection")
 
         model.appearance = .light
         model.onConnect?()
@@ -297,7 +436,7 @@ struct DesktopShellCheck {
               let dragHandle = descendant(content, identifier: "yuliang.desktop.dragHandle") else {
             throw ShellCheckFailure(description: "desktop drag region has no native mouse event receiver")
         }
-        try require(dragHandle.bounds.width >= 160 && dragHandle.bounds.height >= 10,
+        try require(dragHandle.bounds.width >= 130 && dragHandle.bounds.height >= 10,
                     "native drag region does not cover the available header space")
         try require(dragHandle.acceptsFirstMouse(for: nil), "drag region discards the first mouse event on a nonactivating panel")
         try require(!dragHandle.mouseDownCanMoveWindow, "header dragging should remain in the AppKit event tracking path")
@@ -351,11 +490,12 @@ struct DesktopShellCheck {
         model.compact = false
         settle()
         shell.shellTestResize()
-        try require(panel.frame.height >= compactHeight, "expanded card clipped instead of growing")
+        try require(panel.frame.width == 300 && panel.frame.height >= compactHeight,
+                    "expanded card did not grow to its natural 300-point width")
         model.compact = true
         settle()
         shell.shellTestResize()
-        try require(abs(panel.frame.height - compactHeight) <= 1, "compact size failed to restore")
+        try require(panel.frame.width == 264 && abs(panel.frame.height - compactHeight) <= 1, "compact size failed to restore")
 
         model.pinned = false
         settle()
@@ -383,8 +523,9 @@ struct DesktopShellCheck {
         model.positionLocked = false
         settle()
         try require(panel.isMovable && panel.isMovableByWindowBackground, "shared popover model could not unlock the desktop card")
-        try require(abs(shell.shellTestPopover.contentSize.width - 320) <= 1, "popover width is not compact")
-        try require(shell.shellTestPopover.contentSize.height >= 160 && shell.shellTestPopover.contentSize.height < 380, "popover has an invalid fitting height")
+        try require(abs(shell.shellTestPopover.contentSize.width - 264) <= 1, "popover width is not compact")
+        try require(shell.shellTestPopover.contentSize.height >= 100 && shell.shellTestPopover.contentSize.height < 215,
+                    "popover has an invalid fitting height")
         model.onChooseCharacter?(.menuBar)
         settle(0.6)
         try require(shell.shellTestCharacterPopover.isShown

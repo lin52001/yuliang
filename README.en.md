@@ -1,6 +1,6 @@
 # Yuliang · 余量
 
-A compact macOS companion for Codex quota and usage. Your subscription quota, daily and lifetime Token statistics, and character share one desktop card and menu-bar popover. Appearance can follow the system or stay light or dark.
+A compact macOS companion for Codex quota and usage. Choose a 264-point card or a 104-point Duo ring. Your subscription quota, optional daily and lifetime Token statistics, and character share one state with the menu-bar popover. Appearance can follow the system or stay light or dark.
 
 Choose one of four anime-style themes—Star Sugar Dragon Girl, Orange Glow, Blue Whale, or Star Kitty—or five original companions: Mochi Cat, Butter Bunny, Mint Fox, Sesame Bear, and Cloud Sprite. Star Sugar is the default. When a newer, verified quota observation shows consumption, your buddy eats a biscuit and follows the progress bar. Eight interactions include patting, waving, napping, cheering, feeding, jumping, swaying, and spinning. Play never changes quota or Token statistics.
 
@@ -16,13 +16,17 @@ These native-interface previews use synthetic quota and Token statistics, not re
 | --- | --- |
 | ![Synthetic preview of the light desktop card](docs/assets/widget.png) | ![Synthetic preview of the dark desktop card](docs/assets/widget-dark.png) |
 
+| Duo light | Duo dark |
+| --- | --- |
+| ![Synthetic light Duo ring preview](docs/assets/duo.png) | ![Synthetic dark Duo ring preview](docs/assets/duo-dark.png) |
+
 ![Synthetic preview of the dark character picker](docs/assets/characters.png)
 
 ## Install
 
 Requires macOS 14 or later and an installed, signed-in official Codex CLI.
 
-1. Open [Releases](https://github.com/liny007915-debug/yuliang/releases). Download `Yuliang-v0.13.0-macOS-arm64.zip` for Apple Silicon or `Yuliang-v0.13.0-macOS-x86_64.zip` for Intel, if that asset is available. Check **Apple menu → About This Mac** if unsure.
+1. Open [Releases](https://github.com/liny007915-debug/yuliang/releases). Download `Yuliang-v0.14.0-macOS-arm64.zip` for Apple Silicon or `Yuliang-v0.14.0-macOS-x86_64.zip` for Intel, if that asset is available. Check **Apple menu → About This Mac** if unsure.
 2. Extract the archive and move `余量.app` to `~/Applications` or `/Applications`.
 3. Open the app. Collection starts automatically; the app has no Dock icon.
 
@@ -54,13 +58,15 @@ The build produces `releases/余量.app` for the current machine's architecture 
 ## Use
 
 - Click **余 N%** in the menu bar to open the popover.
-- The desktop card is freely movable by default: drag its header or non-interactive areas. Buttons and the character retain their click actions. Use the header's lock/unlock button to fix or release its position. Position and lock preference are saved locally.
+- The desktop card is freely movable by default: drag its header, Duo's top grip, or non-interactive areas. Buttons and the character retain their click actions. Use the header's lock/unlock button or **锁定位置** in settings to fix or release its position. Position and lock preference are saved locally.
 - Set always-on-top or desktop-level placement separately in the settings menu. Always-on-top and position locking are independent.
-- The minus button hides only the desktop card. Background collection continues; show it again or explicitly move it back to the current screen from the popover. This menu action can reposition a locked card.
+- The minus button, or **收起桌面卡片** in settings, hides only the desktop widget. Duo uses the settings option. Background collection continues; show it again or explicitly move it back to the current screen from the popover. This menu action can reposition a locked card.
 - Use the character button to choose the four anime-style themes or five original companions. Your choice is saved locally.
-- Daily and lifetime Token usage are both shown by default. Toggle **日 Token 用量** and **累计 Token 用量** independently under **显示内容** in settings; turning both off hides the row. These switches control display only.
+- Choose **轻巧卡片** or **Duo 圆环** under **小组件样式** in settings. The compact card uses a 12-point rail with a 36-point character. The Duo ring, percentage, and moving character use the same quota value; it does not invent battery or network readings. The choice is saved locally, and switching keeps the window position.
+- Duo uses a 20-point monochrome menu-bar ring. Click it to open the complete card; hide the desktop widget to use the menu-bar entry alone.
+- Daily and lifetime Token usage are both shown by default. Toggle **日 Token 用量** and **累计 Token 用量** independently under **显示内容** in settings. The card uses one row; Duo uses two narrow rows that collapse independently. Hover or open details for the server's daily date and full numbers. These switches control display only.
 - Select system, light, or dark appearance under **外观**. Appearance and display preferences are saved locally.
-- Click the character for a random reaction. Right-click or open the bottom sparkle menu for eight actions: pat, wave, nap, cheer, feed, jump, sway, or spin. Play does not change quota, Token statistics, timestamps, or quota-derived satiety.
+- Click the character for a random reaction. Right-click, open the bottom sparkle menu, or choose **互动** in settings for eight actions: pat, wave, nap, cheer, feed, jump, sway, or spin. Choose a character through the character button or **选择小伙伴** in settings. Play does not change quota, Token statistics, timestamps, or quota-derived satiety.
 - Choose **Settings → 立即刷新** to read immediately; the details window also offers refresh. Open **用量与额度详情** in settings for independent endpoint status and success times, quota windows, statistical scope, and pause/resume controls. Persistent hints and picker instructions are folded away.
 - Quit Yuliang from its menu to stop collection. Sleep pauses requests; waking resumes them.
 
@@ -97,7 +103,7 @@ Quota and character preferences are stored at:
 ~/Library/Application Support/YuliangStandalone/quota.json
 ```
 
-Token statistics and their read status stay in process memory only and are fetched again after restarting; they are not written to the file above. Window placement, position lock, both Token display switches, appearance, and other display preferences are stored through macOS preferences. No real account records or credentials are included in the repository or release archives.
+Token statistics and their read status stay in process memory only and are fetched again after restarting; they are not written to the file above. Window placement, position lock, widget style, both Token display switches, appearance, and other display preferences are stored through macOS preferences. No real account records or credentials are included in the repository or release archives.
 
 If Token statistics are unsupported or missing, values remain unknown and quota keeps its independent result. A failed Token read retains its previous in-memory value and original success time. A restart clears that in-memory value until the next successful read. The daily server date is not converted into your local calendar day.
 

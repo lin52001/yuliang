@@ -16,6 +16,19 @@ enum StandaloneAppearance: String, CaseIterable {
     }
 }
 
+enum StandaloneDisplayStyle: String, CaseIterable {
+    case card, duo
+    var label: String { self == .card ? "轻巧卡片" : "Duo 圆环" }
+}
+
+enum StandaloneLayout {
+    static func cardWidth(compact: Bool) -> CGFloat { compact ? 264 : 300 }
+    static func desktopWidth(style: StandaloneDisplayStyle, compact: Bool) -> CGFloat {
+        style == .duo ? 104 : cardWidth(compact: compact)
+    }
+    static func minimumHeight(style: StandaloneDisplayStyle) -> CGFloat { style == .duo ? 80 : 100 }
+}
+
 enum TokenUsageFormat {
     static func compact(_ value: Int64?) -> String {
         guard let value else { return "—" }
@@ -42,6 +55,7 @@ final class StandaloneModel: ObservableObject {
     @Published var showDailyTokens = true { didSet { onDisplayChange?() } }
     @Published var showLifetimeTokens = true { didSet { onDisplayChange?() } }
     @Published var appearance = StandaloneAppearance.system { didSet { onAppearance?(appearance) } }
+    @Published var displayStyle = StandaloneDisplayStyle.card { didSet { onStyleChange?() } }
     @Published var buddyActivity: BuddyActivity?
     private var clock: AnyCancellable?
     private var lastPlay: BuddyAction = .idle
@@ -56,6 +70,7 @@ final class StandaloneModel: ObservableObject {
     var onShowDesktop: (() -> Void)?
     var onDisplayChange: (() -> Void)?
     var onAppearance: ((StandaloneAppearance) -> Void)?
+    var onStyleChange: (() -> Void)?
 
     init(store: StandaloneQuotaStore = .shared) {
         self.store = store
@@ -223,12 +238,23 @@ struct StandalonePanelView: View {
     }
     var accent: Color { QuotaPalette.accent(for: model.document.preferences.character) }
     var presentation: QuotaPresentation { QuotaPresentation(document: model.document, now: model.now) }
+    private var isDuo: Bool { surface == .desktop && model.displayStyle == .duo }
     var body: some View {
-        VStack(alignment: .leading, spacing: 11) {
-            HStack(spacing: 8) {
+        Group {
+            if isDuo { duoBody }
+            else { cardBody }
+        }
+        .frame(width: isDuo ? 104 : StandaloneLayout.cardWidth(compact: model.compact))
+        .background(QuotaPalette.surface, in: RoundedRectangle(cornerRadius: surface == .desktop ? (isDuo ? 24 : 18) : 0))
+        .buttonStyle(.plain)
+    }
+
+    private var cardBody: some View {
+        VStack(alignment: .leading, spacing: model.compact ? 6 : 10) {
+            HStack(spacing: 5) {
                 HStack(spacing: 5) {
                     Image(systemName: "circle.hexagongrid.fill").font(.system(size: 9))
-                    Text("Codex").font(.system(size: 11, weight: .semibold))
+                    Text("Codex").font(.system(size: 10, weight: .semibold))
                     if surface == .desktop {
                         Image(systemName: "line.3.horizontal").font(.system(size: 8)).foregroundStyle(.tertiary)
                     }
@@ -244,21 +270,23 @@ struct StandalonePanelView: View {
                     Button { model.positionLocked.toggle() } label: {
                         Image(systemName: model.positionLocked ? "lock.fill" : "lock.open")
                     }
+                    .frame(width: 20, height: 20)
                     .help(model.positionLocked ? "解锁位置" : "锁定位置")
                     .accessibilityLabel(model.positionLocked ? "解锁位置" : "锁定位置")
                     Button { model.desktopVisible = false } label: { Image(systemName: "minus") }
+                        .frame(width: 20, height: 20)
                         .help("收起桌面卡片").accessibilityLabel("收起桌面卡片")
                 } else {
                     Button { model.onShowDesktop?() } label: { Image(systemName: "macwindow.badge.plus") }
                         .help("显示桌面卡片").accessibilityLabel("显示桌面卡片")
                 }
                 settingsMenu
-            }.font(.system(size: 11)).foregroundStyle(.secondary)
+            }.font(.system(size: 10)).foregroundStyle(.secondary).frame(height: 20)
             QuotaCard(document: model.document, now: model.now, compact: model.compact,
                       reaction: model.reaction, onPat: model.pat, animateChanges: model.animateQuota,
-                      activity: model.buddyActivity, onAction: model.play, minimal: true)
+                      activity: model.buddyActivity, onAction: model.play, minimal: true, slim: model.compact)
             if model.showDailyTokens || model.showLifetimeTokens {
-                HStack(spacing: 18) {
+                HStack(spacing: 12) {
                     if model.showDailyTokens {
                         tokenValue("日用量 · \(TokenUsageFormat.day(collector.tokenUsage?.serverDay))",
                                    value: collector.tokenUsage?.serverDayTokens, daily: true)
@@ -268,7 +296,7 @@ struct StandalonePanelView: View {
                     }
                 }.padding(.top, 1)
             }
-            HStack(spacing: 13) {
+            HStack(spacing: 8) {
                 Button { model.onConnect?() } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "clock").font(.system(size: 9))
@@ -278,7 +306,7 @@ struct StandalonePanelView: View {
                     }.font(.system(size: 9)).foregroundStyle(Color.secondary)
                 }.help("查看用量、额度及各自更新时间").accessibilityLabel("用量与额度详情")
                 Spacer(minLength: 0)
-                Button(action: model.feed) { CookieBiscuit(bitten: false).frame(width: 16, height: 16).frame(width: 24, height: 24) }
+                Button(action: model.feed) { CookieBiscuit(bitten: false).frame(width: 14, height: 14).frame(width: 22, height: 22) }
                     .disabled(model.isEatingUsage).help("喂一块饼干").accessibilityLabel("喂一块饼干")
                 Menu {
                     ForEach(BuddyAction.interactiveActions, id: \.self) { action in
@@ -286,31 +314,75 @@ struct StandalonePanelView: View {
                     }
                     Divider()
                     Button("随机互动") { model.pat() }
-                } label: { Image(systemName: "sparkles").frame(width: 24, height: 24) }
+                } label: { Image(systemName: "sparkles").frame(width: 22, height: 22) }
                     .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().disabled(model.isEatingUsage)
                     .help("和小伙伴玩").accessibilityLabel("互动动作")
                 Button { model.onChooseCharacter?(surface) } label: {
-                    Image(systemName: "person.crop.circle").frame(width: 24, height: 24)
+                    Image(systemName: "person.crop.circle").frame(width: 22, height: 22)
                 }.help("选择小伙伴 · \(model.document.preferences.character.name)").accessibilityLabel("切换小伙伴")
-            }.font(.system(size: 12)).foregroundStyle(accent)
+            }.font(.system(size: 11)).foregroundStyle(accent)
         }
-        .padding(.horizontal, 15).padding(.vertical, 13)
-        .frame(width: 320)
-        .background(QuotaPalette.surface, in: RoundedRectangle(cornerRadius: surface == .desktop ? 22 : 0))
-        .buttonStyle(.plain)
+        .padding(.horizontal, 12).padding(.vertical, 10)
+    }
+
+    private var duoBody: some View {
+        VStack(spacing: 2) {
+            HStack(spacing: 0) {
+                Image(systemName: model.positionLocked ? "lock.fill" : "line.3.horizontal")
+                    .font(.system(size: 8)).frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(height: 16)
+                    .overlay {
+                        WindowDragHandle(locked: model.positionLocked)
+                            .help(model.positionLocked ? "位置已锁定" : "拖动小组件")
+                    }
+                settingsMenu.frame(width: 22, height: 16)
+            }.foregroundStyle(.secondary)
+            QuotaDuoGauge(document: model.document, now: model.now, reaction: model.reaction,
+                          onPat: model.pat, animateChanges: model.animateQuota,
+                          activity: model.buddyActivity, onAction: model.play, size: 80)
+            if model.showDailyTokens {
+                duoToken("日", value: collector.tokenUsage?.serverDayTokens, daily: true)
+            }
+            if model.showLifetimeTokens {
+                duoToken("累计", value: collector.tokenUsage?.lifetimeTokens, daily: false)
+            }
+            Button { model.onConnect?() } label: {
+                HStack(spacing: 3) {
+                    Image(systemName: "clock").font(.system(size: 8))
+                    Text(presentation.observedAt.map { $0.formatted(date: .omitted, time: .shortened) } ?? "未读取")
+                        .monospacedDigit()
+                }.font(.system(size: 9)).foregroundStyle(Color.secondary)
+                    .frame(height: 12)
+            }.help("查看用量、额度及各自更新时间").accessibilityLabel("用量与额度详情")
+        }.padding(.horizontal, 8).padding(.vertical, 6)
+    }
+
+    private func duoToken(_ label: String, value: Int64?, daily: Bool) -> some View {
+        Button { model.onConnect?() } label: {
+            HStack(spacing: 3) {
+                Text(label).foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+                if collector.tokenUsage != nil && collector.tokenUsageState != .available {
+                    Image(systemName: "clock.badge.exclamationmark").foregroundStyle(.secondary)
+                }
+                Text(TokenUsageFormat.compact(value)).monospacedDigit().fontWeight(.medium)
+            }.font(.system(size: 9)).frame(height: 12)
+        }
+        .help("\(daily ? "服务端日统计 · " + TokenUsageFormat.day(collector.tokenUsage?.serverDay) : "账号累计统计") · \(TokenUsageFormat.exact(value))\n\(collector.tokenUsageStatus)")
+        .accessibilityLabel("\(daily ? "日 Token 用量" : "累计 Token 用量")，\(TokenUsageFormat.exact(value))，\(collector.tokenUsageStatus)")
     }
 
     private func tokenValue(_ label: String, value: Int64?, daily: Bool) -> some View {
         let outdated = collector.tokenUsage != nil && collector.tokenUsageState != .available
         let timestamp = collector.tokenUsageLastSuccessAt.map { $0.formatted(date: .abbreviated, time: .standard) } ?? "尚未读取"
         return Button { model.onConnect?() } label: {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 3) {
                     Text(label)
                     if outdated { Image(systemName: "clock.badge.exclamationmark") }
                 }.font(.system(size: 9)).foregroundStyle(.secondary).lineLimit(1)
                 HStack(alignment: .firstTextBaseline, spacing: 3) {
-                    Text(TokenUsageFormat.compact(value)).font(.system(size: 17, weight: .semibold, design: .rounded))
+                    Text(TokenUsageFormat.compact(value)).font(.system(size: model.compact ? 14 : 17, weight: .semibold, design: .rounded))
                     Text("Token").font(.system(size: 9)).foregroundStyle(.secondary)
                 }.monospacedDigit().lineLimit(1).minimumScaleFactor(0.8)
             }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
@@ -333,6 +405,14 @@ struct StandalonePanelView: View {
                 }
             }
             Divider()
+            Menu("小组件样式") {
+                ForEach(StandaloneDisplayStyle.allCases, id: \.self) { style in
+                    Button { model.displayStyle = style } label: {
+                        if model.displayStyle == style { Label(style.label, systemImage: "checkmark") }
+                        else { Text(style.label) }
+                    }
+                }
+            }
             Menu("显示内容") {
                 Toggle("日 Token 用量", isOn: $model.showDailyTokens)
                 Toggle("累计 Token 用量", isOn: $model.showLifetimeTokens)
@@ -344,6 +424,13 @@ struct StandalonePanelView: View {
                         if model.appearance == appearance { Label(appearance.label, systemImage: "checkmark") }
                         else { Text(appearance.label) }
                     }
+                }
+            }
+            Button("选择小伙伴") { model.onChooseCharacter?(surface) }
+            Menu("互动") {
+                ForEach(BuddyAction.interactiveActions, id: \.self) { action in
+                    Button { model.play(action) } label: { Label(action.label, systemImage: action.symbol) }
+                        .disabled(model.isEatingUsage)
                 }
             }
             Toggle("锁定位置", isOn: $model.positionLocked)

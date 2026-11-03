@@ -217,10 +217,11 @@ struct QuotaCard: View {
     var activityPreviewElapsed: TimeInterval? = nil
     var onAction: ((BuddyAction) -> Void)? = nil
     var minimal = false
+    var slim = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
         let value = QuotaPresentation(document: document, now: now)
-        QuotaCardContent(document: document, now: now, compact: compact, minimal: minimal, reaction: reaction,
+        QuotaCardContent(document: document, now: now, compact: compact, minimal: minimal, slim: slim, reaction: reaction,
                          resourceBundle: resourceBundle, onPat: onPat, widgetInteraction: widgetInteraction,
                          progress: value.remainingPercent ?? 0, isKnown: value.remainingPercent != nil,
                          activity: activity, activityPreviewElapsed: activityPreviewElapsed, onAction: onAction)
@@ -236,6 +237,7 @@ private struct QuotaCardContent: View, Animatable {
     let now: Date
     let compact: Bool
     let minimal: Bool
+    let slim: Bool
     let reaction: Bool
     let resourceBundle: Bundle
     let onPat: (() -> Void)?
@@ -294,7 +296,20 @@ private struct QuotaCardContent: View, Animatable {
         return presentation.window?.label ?? "网页订阅"
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: compact ? 6 : 10) {
+        VStack(alignment: .leading, spacing: slim ? 4 : compact ? 6 : 10) {
+            if slim {
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text(presentation.window?.label ?? "订阅额度")
+                        .font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary).lineLimit(1)
+                    Circle().fill(presentation.freshness == .fresh && remaining != nil ? Color.green : Color.secondary)
+                        .frame(width: 4, height: 4).help(status).accessibilityLabel(status)
+                    Spacer(minLength: 4)
+                    Text(remaining == nil ? "待确认" : readingLabel)
+                        .font(.system(size: 9)).foregroundStyle(.secondary)
+                    readout.font(.system(size: 18, weight: .semibold, design: .rounded))
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+            } else {
             HStack(spacing: compact ? 4 : 6) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(minimal ? "订阅额度" : providerName).font(.system(size: compact ? 12 : 13, weight: .semibold))
@@ -317,11 +332,12 @@ private struct QuotaCardContent: View, Animatable {
                     }
                 }
             }
+            }
             QuotaRail(remainingPercent: remaining, character: document.preferences.character, frame: frame,
-                      accent: accent, size: compact ? 48 : 56, resourceBundle: resourceBundle,
+                      accent: accent, size: slim ? 36 : compact ? 48 : 56, resourceBundle: resourceBundle,
                       onPat: onPat, widgetInteraction: widgetInteraction, activity: activity, activityPreviewElapsed: activityPreviewElapsed,
-                      onAction: onAction)
-                .frame(height: compact ? 48 : 56)
+                      onAction: onAction, trackHeight: slim ? 12 : nil)
+                .frame(height: slim ? 36 : compact ? 48 : 56)
             if !minimal && !compact { Text(title).font(.system(size: 12, weight: .medium)).lineLimit(1) }
             if !minimal { HStack(alignment: .firstTextBaseline) {
                 Text(used.map { "已用 \(String(format: "%.0f", $0))%" } ?? "已用量未知")
@@ -369,13 +385,14 @@ struct QuotaRail: View {
     var activity: BuddyActivity?
     var activityPreviewElapsed: TimeInterval?
     var onAction: ((BuddyAction) -> Void)?
+    var trackHeight: CGFloat?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
 
     init(remainingPercent: Double?, character: QuotaCharacter, frame: Int, accent: Color,
          size: CGFloat, resourceBundle: Bundle = .main, onPat: (() -> Void)? = nil,
          widgetInteraction: Bool = false, activity: BuddyActivity? = nil, activityPreviewElapsed: TimeInterval? = nil,
-         onAction: ((BuddyAction) -> Void)? = nil) {
+         onAction: ((BuddyAction) -> Void)? = nil, trackHeight: CGFloat? = nil) {
         let valid = remainingPercent.map { $0.isFinite && (0...100).contains($0) } ?? false
         self.progress = valid ? remainingPercent! : 0
         self.isKnown = valid
@@ -383,6 +400,7 @@ struct QuotaRail: View {
         self.size = size; self.resourceBundle = resourceBundle
         self.onPat = onPat; self.widgetInteraction = widgetInteraction
         self.activity = activity; self.activityPreviewElapsed = activityPreviewElapsed; self.onAction = onAction
+        self.trackHeight = trackHeight
     }
     private var motion: BuddyMotionProfile {
         BuddyMotionProfile(character: character, illustrated: character.illustrationRow != nil
@@ -393,11 +411,13 @@ struct QuotaRail: View {
             let layout = QuotaRailGeometry(width: geometry.size.width, avatarSize: size, remainingPercent: isKnown ? progress : nil)
             ZStack(alignment: .leading) {
                 Capsule().fill(accent.opacity(colorScheme == .dark ? 0.12 : 0.065))
+                    .frame(height: trackHeight)
                 // Crop a full-size capsule. A narrow capsule becomes a
                 // vertical pill at low percentages, which misrepresents the track.
                 Capsule().fill(accent.opacity(colorScheme == .dark ? 0.24 : 0.13))
+                    .frame(height: trackHeight)
                     .mask(alignment: .leading) { Rectangle().frame(width: layout.fillWidth) }
-                if layout.isKnown {
+                if layout.isKnown && trackHeight == nil {
                     HStack(spacing: 0) {
                         ForEach(0..<8) { index in
                             Image(systemName: index % 2 == 0 ? "sparkle" : "heart.fill")
@@ -420,7 +440,7 @@ struct QuotaRail: View {
                 } else {
                     buddy(size: layout.avatarSize).offset(x: layout.markerLeadingX)
                 }
-            }
+            }.frame(width: geometry.size.width, height: geometry.size.height, alignment: .leading)
         }
         .accessibilityElement(children: .contain)
     }
@@ -447,6 +467,7 @@ struct QuotaRail: View {
     }
     private func adaptedMotion(_ sample: BuddyMotionSample, action: BuddyAction, size: Double)
         -> (angle: Double, x: Double, y: Double, scaleX: Double, scaleY: Double) {
+        let spriteScale = min(1, size / 48)
         var angle = sample.rotationDegrees
         var x = sample.horizontalOffset * size
         var y = sample.verticalOffset * size
@@ -455,16 +476,16 @@ struct QuotaRail: View {
         switch action {
         case .wave: angle *= motion.waveAngle / 8
         case .nap: angle *= motion.napAngle / 5
-        case .eating: y = sample.verticalOffset / 0.014 * motion.chewLift
-        case .celebrate: y = sample.verticalOffset / 0.08 * motion.cheerLift
+        case .eating: y = sample.verticalOffset / 0.014 * motion.chewLift * spriteScale
+        case .celebrate: y = sample.verticalOffset / 0.08 * motion.cheerLift * spriteScale
         case .pat:
             scaleX = 1 + (sample.scaleX - 1) / 0.045 * motion.patScale
             scaleY = 1 + (sample.scaleY - 1) / 0.045 * motion.patScale
         case .jump:
-            y = sample.verticalOffset / 0.18 * motion.jumpLift
+            y = sample.verticalOffset / 0.18 * motion.jumpLift * spriteScale
         case .dance:
             angle *= motion.danceAngle / 10
-            x = sample.horizontalOffset / 0.055 * motion.danceSway
+            x = sample.horizontalOffset / 0.055 * motion.danceSway * spriteScale
         case .spin: angle *= motion.spinDirection
         case .idle: break
         }
@@ -506,11 +527,12 @@ struct QuotaRail: View {
         // The bite notch, rather than the cookie's center, meets the mouth.
         let targetX = (motion.mouthX - 0.10) * size
         let targetY = (motion.mouthY + 0.09) * size
+        let approachDistance = size * 0.60 * min(1, size / 32)
         return ZStack {
             CookieBiscuit(bitten: reduceMotion || t > 0.32)
                 .frame(width: size * 0.30, height: size * 0.30)
                 .scaleEffect(reduceMotion ? 1 : 1 - chewing * 0.65)
-                .offset(x: reduceMotion ? targetX : targetX - size * 0.60 * (1 - approach),
+                .offset(x: reduceMotion ? targetX : targetX - approachDistance * (1 - approach),
                         y: reduceMotion ? targetY : targetY - sin(approach * .pi) * size * 0.08)
                 .opacity(reduceMotion ? 1 : 1 - chewing)
             if !reduceMotion && t > 0.36 && t < 0.92 {
@@ -556,6 +578,158 @@ struct QuotaRail: View {
             }.buttonStyle(.plain).accessibilityLabel("摸摸\(character.name)")
         } else {
             BuddySprite(character: character, frame: spriteFrame ?? frame, size: size, resourceBundle: resourceBundle)
+        }
+    }
+}
+
+/// A compact gauge uses one measured percentage for its ring, text and orbit.
+/// Its reserved outer margin contains the sprite's motion and feeding biscuit.
+struct QuotaDuoGeometry: Equatable {
+    let side: CGFloat
+    let ringDiameter: CGFloat
+    let avatarSize: CGFloat
+    let progress: Double
+    let isKnown: Bool
+    let markerX: CGFloat
+    let markerY: CGFloat
+
+    init(size: CGFloat, remainingPercent: Double?) {
+        side = size.isFinite ? max(64, size) : 80
+        ringDiameter = side * 0.60
+        avatarSize = side * 0.275
+        isKnown = remainingPercent.map { $0.isFinite && (0...100).contains($0) } ?? false
+        progress = isKnown ? remainingPercent! : 0
+        let angle = progress / 100 * .pi * 2 - .pi / 2
+        markerX = side / 2 + (isKnown ? ringDiameter / 2 * cos(angle) : 0)
+        markerY = side / 2 + (isKnown ? ringDiameter / 2 * sin(angle) : 0)
+    }
+}
+
+struct QuotaDuoGauge: View {
+    let document: QuotaStoreDocument
+    let now: Date
+    var reaction = false
+    var resourceBundle: Bundle = .main
+    var onPat: (() -> Void)? = nil
+    var animateChanges = false
+    var activity: BuddyActivity? = nil
+    var activityPreviewElapsed: TimeInterval? = nil
+    var onAction: ((BuddyAction) -> Void)? = nil
+    var size: CGFloat = 80
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        let value = QuotaPresentation(document: document, now: now)
+        QuotaDuoGaugeContent(document: document, now: now, reaction: reaction,
+                             resourceBundle: resourceBundle, onPat: onPat,
+                             progress: value.remainingPercent ?? 0, isKnown: value.remainingPercent != nil,
+                             activity: activity, activityPreviewElapsed: activityPreviewElapsed,
+                             onAction: onAction, size: size)
+            .animation(animateChanges && !reduceMotion && value.freshness == .fresh ? .easeInOut(duration: 0.8) : nil,
+                       value: value.remainingPercent)
+            .id("duo/\(value.provider.rawValue)/\(value.window?.id ?? "missing")/\(value.remainingPercent != nil)/\(value.freshness)")
+    }
+}
+
+private struct QuotaDuoGaugeContent: View, Animatable {
+    let document: QuotaStoreDocument
+    let now: Date
+    let reaction: Bool
+    let resourceBundle: Bundle
+    let onPat: (() -> Void)?
+    var progress: Double
+    let isKnown: Bool
+    let activity: BuddyActivity?
+    let activityPreviewElapsed: TimeInterval?
+    let onAction: ((BuddyAction) -> Void)?
+    let size: CGFloat
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorScheme) private var colorScheme
+
+    var animatableData: Double {
+        get { progress }
+        set { progress = newValue }
+    }
+    private var presentation: QuotaPresentation { QuotaPresentation(document: document, now: now) }
+    private var layout: QuotaDuoGeometry {
+        QuotaDuoGeometry(size: size, remainingPercent: isKnown ? min(100, max(0, progress)) : nil)
+    }
+    private var accent: Color { QuotaPalette.accent(for: document.preferences.character) }
+    private var frame: Int {
+        if reaction { return 4 }
+        guard layout.isKnown else { return 0 }
+        let used = 100 - layout.progress
+        return used >= 90 ? 3 : used >= 60 ? 2 : used >= 25 ? 1 : 0
+    }
+    private var readingLabel: String {
+        guard layout.isKnown else { return "待确认" }
+        switch presentation.freshness {
+        case .stale, .resetDue: return "上次"
+        case .fresh: return "剩余"
+        case .missing: return "待确认"
+        }
+    }
+    private var status: String {
+        switch presentation.freshness {
+        case .stale: return "上次记录，已陈旧"
+        case .resetDue: return "上次记录，重置待核对"
+        case .missing: return "等待读取额度"
+        case .fresh: return layout.isKnown ? "已读取" : "Codex 未提供百分比"
+        }
+    }
+    private var renderer: QuotaRail {
+        QuotaRail(remainingPercent: layout.isKnown ? layout.progress : nil,
+                  character: document.preferences.character, frame: frame, accent: accent,
+                  size: layout.avatarSize, resourceBundle: resourceBundle, onPat: onPat,
+                  activity: activity, activityPreviewElapsed: activityPreviewElapsed, onAction: onAction)
+    }
+
+    var body: some View {
+        ZStack {
+            Circle().stroke(accent.opacity(colorScheme == .dark ? 0.19 : 0.12), lineWidth: 4)
+                .frame(width: layout.ringDiameter, height: layout.ringDiameter)
+                .accessibilityHidden(true)
+            if layout.isKnown {
+                Circle().trim(from: 0, to: layout.progress / 100)
+                    .stroke(accent.opacity(presentation.freshness == .fresh ? 0.90 : 0.48),
+                            style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                    .frame(width: layout.ringDiameter, height: layout.ringDiameter)
+                    .accessibilityHidden(true)
+                VStack(spacing: 0) {
+                    Text(String(format: "%.0f%%", layout.progress))
+                        .font(.system(size: layout.side * 0.20, weight: .semibold, design: .rounded))
+                        .monospacedDigit()
+                        .accessibilityLabel("\(readingLabel)百分之\(Int(layout.progress.rounded()))")
+                    Text(readingLabel).font(.system(size: 8, weight: .medium)).foregroundStyle(.secondary)
+                }.foregroundStyle(QuotaPalette.ink)
+                animatedBuddy.position(x: layout.markerX, y: layout.markerY)
+            } else {
+                VStack(spacing: 0) {
+                    animatedBuddy
+                    Text("—").font(.system(size: 13, weight: .medium)).foregroundStyle(.secondary)
+                        .accessibilityLabel("剩余额度未知")
+                }
+            }
+        }
+        .frame(width: layout.side, height: layout.side)
+        .help("\(presentation.window?.label ?? "订阅额度") · \(status)")
+        .accessibilityElement(children: .contain)
+    }
+
+    @ViewBuilder private var animatedBuddy: some View {
+        if let activity {
+            if let elapsed = activityPreviewElapsed {
+                renderer.activeBuddy(activity, elapsed: elapsed, size: layout.avatarSize)
+            } else {
+                TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion)) { context in
+                    renderer.activeBuddy(activity,
+                                         elapsed: max(0, context.date.timeIntervalSince(activity.startedAt)),
+                                         size: layout.avatarSize)
+                }.frame(width: layout.avatarSize, height: layout.avatarSize)
+            }
+        } else {
+            renderer.buddy(size: layout.avatarSize)
         }
     }
 }
