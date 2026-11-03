@@ -8,10 +8,14 @@ import UIKit
 
 enum QuotaPalette {
     static let ink = Color.primary
-    static let surface = adaptive(light: (1, 1, 1), dark: (0.105, 0.105, 0.12))
+    #if os(macOS)
+    static let surface = Color(nsColor: .windowBackgroundColor)
+    #else
+    static let surface = Color(uiColor: .secondarySystemBackground)
+    #endif
     static let purple = Color(red: 0.42, green: 0.31, blue: 0.56)
     static let pink = Color(red: 0.74, green: 0.31, blue: 0.46)
-    static let track = adaptive(light: (0.95, 0.94, 0.97), dark: (0.19, 0.18, 0.22))
+    static let track = Color.primary.opacity(0.09)
     private static func adaptive(light: (Double, Double, Double), dark: (Double, Double, Double)) -> Color {
         #if os(macOS)
         return Color(nsColor: NSColor(name: nil, dynamicProvider: { appearance in
@@ -306,7 +310,7 @@ private struct QuotaCardContent: View, Animatable {
                     Spacer(minLength: 4)
                     Text(remaining == nil ? "待确认" : readingLabel)
                         .font(.system(size: 9)).foregroundStyle(.secondary)
-                    readout.font(.system(size: 18, weight: .semibold, design: .rounded))
+                    readout.font(.system(size: 22, weight: .semibold, design: .rounded))
                         .fixedSize(horizontal: true, vertical: false)
                 }
             } else {

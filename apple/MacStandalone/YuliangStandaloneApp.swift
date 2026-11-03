@@ -22,11 +22,13 @@ enum StandaloneDisplayStyle: String, CaseIterable {
 }
 
 enum StandaloneLayout {
-    static func cardWidth(compact: Bool) -> CGFloat { compact ? 264 : 300 }
+    static let cornerRadius: CGFloat = 22
+    static let height: CGFloat = 160
+    static func cardWidth(compact: Bool) -> CGFloat { 344 }
     static func desktopWidth(style: StandaloneDisplayStyle, compact: Bool) -> CGFloat {
-        style == .duo ? 104 : cardWidth(compact: compact)
+        style == .duo ? 160 : cardWidth(compact: compact)
     }
-    static func minimumHeight(style: StandaloneDisplayStyle) -> CGFloat { style == .duo ? 80 : 100 }
+    static func minimumHeight(style: StandaloneDisplayStyle) -> CGFloat { height }
 }
 
 enum TokenUsageFormat {
@@ -57,7 +59,9 @@ final class StandaloneModel: ObservableObject {
     @Published var appearance = StandaloneAppearance.system { didSet { onAppearance?(appearance) } }
     @Published var displayStyle = StandaloneDisplayStyle.card { didSet { onStyleChange?() } }
     @Published var buddyActivity: BuddyActivity?
+    @Published var buddyFeedback = BuddyFeedbackState()
     private var clock: AnyCancellable?
+    private var feedbackTransition: DispatchWorkItem?
     private var lastPlay: BuddyAction = .idle
     let collector: CodexQuotaCollector
     let store: StandaloneQuotaStore
@@ -91,6 +95,7 @@ final class StandaloneModel: ObservableObject {
                 document = try store.read()
             } catch { self.error = error.localizedDescription }
         }
+        buddyFeedback = BuddyFeedbackState(observedAt: QuotaPresentation(document: document).observedAt)
         collector.onSnapshot = { [weak self] snapshot in
             guard let self else { return }
             let previous = QuotaPresentation(document: self.document)
@@ -105,6 +110,10 @@ final class StandaloneModel: ObservableObject {
                 && (next.observedAt ?? .distantPast) > (previous.observedAt ?? .distantFuture)
             self.document = latest
             self.now = Date()
+            if let observedAt = next.observedAt {
+                self.buddyFeedback.didRefresh(observedAt: observedAt, now: self.now)
+                self.scheduleFeedbackTransition()
+            }
             if let consumed = BuddyQuotaChange.consumption(from: previous, to: next) {
                 self.buddyActivity = BuddyActivity(action: .eating, startedAt: self.now, source: .usage, consumedPercent: consumed)
             }
@@ -138,7 +147,10 @@ final class StandaloneModel: ObservableObject {
     func play(_ action: BuddyAction) {
         guard !isEatingUsage, action != .idle else { return }
         lastPlay = action
-        buddyActivity = BuddyActivity(action: action, startedAt: Date(), source: .play)
+        now = Date()
+        buddyActivity = BuddyActivity(action: action, startedAt: now, source: .play)
+        buddyFeedback.interact(action, now: now)
+        scheduleFeedbackTransition()
     }
     func feed() { play(.eating) }
     var availableCharacters: [QuotaCharacter] {
@@ -152,6 +164,11 @@ final class StandaloneModel: ObservableObject {
         preference { $0.character = character }
         guard document.preferences.character == character else { return }
         buddyActivity = eating ?? BuddyActivity(action: .wave, startedAt: Date(), source: .play)
+        if eating == nil {
+            now = Date()
+            buddyFeedback.interact(.wave, now: now)
+            scheduleFeedbackTransition()
+        }
     }
     func switchCharacter() {
         let index = availableCharacters.firstIndex(of: document.preferences.character) ?? -1
@@ -160,6 +177,35 @@ final class StandaloneModel: ObservableObject {
     var isEatingUsage: Bool {
         guard let activity = buddyActivity else { return false }
         return activity.action == .eating && activity.source == .usage && Date().timeIntervalSince(activity.startedAt) < activity.duration
+    }
+    var feedbackMessage: BuddyFeedbackMessage {
+        let value = QuotaPresentation(document: document, now: now)
+        let issue: String?
+        if error != nil { issue = "读取失败，点此查看" }
+        else if collector.needsLogin { issue = "请先登录 Codex" }
+        else if collector.quotaError != nil { issue = "额度读取失败，点此查看" }
+        else {
+            switch value.freshness {
+            case .missing: issue = "等待读取 Codex 额度"
+            case .stale: issue = "上次额度已陈旧，点此查看"
+            case .resetDue: issue = "额度重置待核对"
+            case .fresh: issue = value.remainingPercent == nil ? "官方未提供额度比例" : nil
+            }
+        }
+        return buddyFeedback.message(at: now,
+                                     refreshTimeLabel: value.observedAt?.formatted(date: .omitted, time: .standard) ?? "",
+                                     error: issue)
+    }
+    private func scheduleFeedbackTransition() {
+        feedbackTransition?.cancel()
+        guard let deadline = buddyFeedback.nextTransition(after: Date()) else { return }
+        let transition = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.now = Date()
+            self.scheduleFeedbackTransition()
+        }
+        feedbackTransition = transition
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(0, deadline.timeIntervalSinceNow), execute: transition)
     }
     var reaction: Bool {
         guard let date = document.preferences.reactionAt else { return false }
@@ -646,6 +692,7 @@ struct StandalonePanelView: View {
     @ObservedObject var model: StandaloneModel
     @ObservedObject var collector: CodexQuotaCollector
     let surface: StandaloneSurface
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     init(model: StandaloneModel, surface: StandaloneSurface = .desktop) {
         self.model = model; self.collector = model.collector; self.surface = surface
     }
@@ -657,17 +704,22 @@ struct StandalonePanelView: View {
             if isDuo { duoBody }
             else { cardBody }
         }
-        .frame(width: isDuo ? 104 : StandaloneLayout.cardWidth(compact: model.compact))
-        .background(QuotaPalette.surface, in: RoundedRectangle(cornerRadius: surface == .desktop ? (isDuo ? 24 : 18) : 0))
+        .frame(width: isDuo ? 160 : StandaloneLayout.cardWidth(compact: model.compact), height: StandaloneLayout.height)
+        .background {
+            if surface == .desktop {
+                RoundedRectangle(cornerRadius: StandaloneLayout.cornerRadius, style: .continuous)
+                    .fill(.regularMaterial)
+            } else { QuotaPalette.surface }
+        }
         .buttonStyle(.plain)
     }
 
     private var cardBody: some View {
-        VStack(alignment: .leading, spacing: model.compact ? 6 : 10) {
+        VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 5) {
                 HStack(spacing: 5) {
-                    Image(systemName: "circle.hexagongrid.fill").font(.system(size: 9))
-                    Text("Codex").font(.system(size: 10, weight: .semibold))
+                    Image(systemName: "circle.hexagongrid.fill").font(.system(size: 10))
+                    Text("Codex").font(.system(size: 12, weight: .semibold))
                     if surface == .desktop {
                         Image(systemName: "line.3.horizontal").font(.system(size: 8)).foregroundStyle(.tertiary)
                     }
@@ -694,31 +746,28 @@ struct StandalonePanelView: View {
                         .help("显示桌面卡片").accessibilityLabel("显示桌面卡片")
                 }
                 settingsMenu
-            }.font(.system(size: 10)).foregroundStyle(.secondary).frame(height: 20)
-            QuotaCard(document: model.document, now: model.now, compact: model.compact,
+            }.font(.system(size: 11)).foregroundStyle(.secondary).frame(height: 18)
+            QuotaCard(document: model.document, now: model.now, compact: true,
                       reaction: model.reaction, onPat: model.pat, animateChanges: model.animateQuota,
-                      activity: model.buddyActivity, onAction: model.play, minimal: true, slim: model.compact)
-            if model.showDailyTokens || model.showLifetimeTokens {
-                HStack(spacing: 12) {
-                    if model.showDailyTokens {
-                        tokenValue("日用量 · \(TokenUsageFormat.day(collector.tokenUsage?.serverDay))",
-                                   value: collector.tokenUsage?.serverDayTokens, daily: true)
+                      activity: model.buddyActivity, onAction: model.play, minimal: true, slim: true)
+                .frame(height: 66)
+            Group {
+                if model.showDailyTokens || model.showLifetimeTokens {
+                    HStack(spacing: 12) {
+                        if model.showDailyTokens {
+                            tokenValue("日用量 · \(TokenUsageFormat.day(collector.tokenUsage?.serverDay))",
+                                       value: collector.tokenUsage?.serverDayTokens, daily: true)
+                        }
+                        if model.showLifetimeTokens {
+                            tokenValue("累计用量", value: collector.tokenUsage?.lifetimeTokens, daily: false)
+                        }
                     }
-                    if model.showLifetimeTokens {
-                        tokenValue("累计用量", value: collector.tokenUsage?.lifetimeTokens, daily: false)
-                    }
-                }.padding(.top, 1)
-            }
-            HStack(spacing: 8) {
-                Button { model.onConnect?() } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "clock").font(.system(size: 9))
-                        if let date = presentation.observedAt {
-                            Text("额度 \(date.formatted(date: .omitted, time: .shortened))").monospacedDigit()
-                        } else { Text("等待读取额度") }
-                    }.font(.system(size: 9)).foregroundStyle(Color.secondary)
-                }.help("查看用量、额度及各自更新时间").accessibilityLabel("用量与额度详情")
-                Spacer(minLength: 0)
+                } else { Color.clear.accessibilityHidden(true) }
+            }.frame(height: 28)
+            Spacer(minLength: 0)
+            HStack(spacing: 4) {
+                feedbackFooter
+                Spacer(minLength: 2)
                 Button(action: model.feed) { CookieBiscuit(bitten: false).frame(width: 14, height: 14).frame(width: 22, height: 22) }
                     .disabled(model.isEatingUsage).help("喂一块饼干").accessibilityLabel("喂一块饼干")
                 StandaloneNativeMenuButton(model: model, surface: surface, kind: .interactions)
@@ -726,41 +775,72 @@ struct StandalonePanelView: View {
                 Button { model.onChooseCharacter?(surface) } label: {
                     Image(systemName: "person.crop.circle").frame(width: 22, height: 22)
                 }.help("选择小伙伴 · \(model.document.preferences.character.name)").accessibilityLabel("切换小伙伴")
-            }.font(.system(size: 11)).foregroundStyle(accent)
+            }.font(.system(size: 12)).foregroundStyle(accent).frame(height: 22)
         }
-        .padding(.horizontal, 12).padding(.vertical, 10)
+        .padding(.horizontal, 14).padding(.vertical, 10)
+    }
+
+    private var feedbackFooter: some View {
+        let message = model.feedbackMessage
+        return Button { model.onConnect?() } label: {
+            HStack(alignment: .center, spacing: 4) {
+                Image(systemName: message.symbol)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(message.kind == .error ? Color.secondary : accent)
+                    .accessibilityHidden(true)
+                Text(message.text)
+                    .font(.system(size: 11, weight: message.kind == .interaction ? .medium : .regular))
+                    .foregroundStyle(message.kind == .interaction ? Color.primary : Color.secondary)
+                    .lineLimit(isDuo ? 2 : 1)
+                    .multilineTextAlignment(isDuo ? .center : .leading)
+                    .contentTransition(.opacity)
+            }
+            .frame(maxWidth: .infinity, minHeight: isDuo ? 26 : 22, maxHeight: isDuo ? 26 : 22,
+                   alignment: isDuo ? .center : .leading)
+            .contentShape(Rectangle())
+        }
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: message)
+        .help(feedbackHelp)
+        .accessibilityLabel(message.text)
+        .accessibilityIdentifier("yuliang.widget.feedback")
+    }
+
+    private var feedbackHelp: String {
+        var lines = [model.feedbackMessage.text]
+        if let detail = model.error ?? collector.quotaError { lines.append(detail) }
+        lines.append(presentation.observedAt.map { "额度更新 " + $0.formatted(date: .abbreviated, time: .standard) } ?? "额度尚未读取")
+        lines.append("点按查看用量与额度详情")
+        return lines.joined(separator: "\n")
     }
 
     private var duoBody: some View {
-        VStack(spacing: 2) {
-            HStack(spacing: 0) {
-                Image(systemName: model.positionLocked ? "lock.fill" : "line.3.horizontal")
-                    .font(.system(size: 8)).frame(maxWidth: .infinity, alignment: .leading)
+        VStack(spacing: 0) {
+            HStack(spacing: 3) {
+                HStack(spacing: 4) {
+                    Text("Codex").font(.system(size: 11, weight: .semibold))
+                    if model.positionLocked { Image(systemName: "lock.fill").font(.system(size: 8)) }
+                }.frame(maxWidth: .infinity, alignment: .leading)
                     .frame(height: 16)
                     .overlay {
                         WindowDragHandle(locked: model.positionLocked)
                             .help(model.positionLocked ? "位置已锁定" : "拖动小组件")
                     }
                 settingsMenu
-            }.foregroundStyle(.secondary)
+            }.foregroundStyle(.secondary).frame(height: 16)
             QuotaDuoGauge(document: model.document, now: model.now, reaction: model.reaction,
                           onPat: model.pat, animateChanges: model.animateQuota,
-                          activity: model.buddyActivity, onAction: model.play, size: 80)
-            if model.showDailyTokens {
-                duoToken("日", value: collector.tokenUsage?.serverDayTokens, daily: true)
-            }
-            if model.showLifetimeTokens {
-                duoToken("累计", value: collector.tokenUsage?.lifetimeTokens, daily: false)
-            }
-            Button { model.onConnect?() } label: {
-                HStack(spacing: 3) {
-                    Image(systemName: "clock").font(.system(size: 8))
-                    Text(presentation.observedAt.map { $0.formatted(date: .omitted, time: .shortened) } ?? "未读取")
-                        .monospacedDigit()
-                }.font(.system(size: 9)).foregroundStyle(Color.secondary)
-                    .frame(height: 12)
-            }.help("查看用量、额度及各自更新时间").accessibilityLabel("用量与额度详情")
-        }.padding(.horizontal, 8).padding(.vertical, 6)
+                          activity: model.buddyActivity, onAction: model.play, size: 86)
+                .frame(height: 86)
+            HStack(spacing: 8) {
+                if model.showDailyTokens {
+                    duoToken("日", value: collector.tokenUsage?.serverDayTokens, daily: true)
+                }
+                if model.showLifetimeTokens {
+                    duoToken("累计", value: collector.tokenUsage?.lifetimeTokens, daily: false)
+                }
+            }.frame(height: 14)
+            feedbackFooter
+        }.padding(.horizontal, 10).padding(.vertical, 9)
     }
 
     private func duoToken(_ label: String, value: Int64?, daily: Bool) -> some View {

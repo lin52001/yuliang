@@ -65,7 +65,7 @@ struct StandaloneInteractionVerification {
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
             defer { try? FileManager.default.removeItem(at: root) }
             try run(directory: root)
-            print("Standalone互动隔离验证通过：11组。仅使用合成额度和临时存储，未启动Codex采集或读取认证。")
+            print("Standalone互动隔离验证通过：16组。仅使用合成额度和临时存储，未启动Codex采集或读取认证。")
         } catch {
             fputs("Standalone互动隔离验证失败：\(error)\n", stderr)
             exit(1)
@@ -272,6 +272,153 @@ struct StandaloneInteractionVerification {
             try expect(rig.model.buddyActivity?.id == usageID && rig.model.buddyActivity?.source == .usage,
                        "显式动作或更换伙伴不能打断真实用量进食")
             try expect(rig.model.document.records == usedRecords, "进食互动控制不能篡改已确认额度")
+        }
+
+        // 12. Restoring an already observed account shows encouragement, not a
+        // timestamp flash; wall-clock presentation updates cannot shuffle it.
+        do {
+            let rig = try InteractionRig(parent: directory, name: "feedback-restored")
+            try rig.accept(rig.snapshot(80))
+            let restored = StandaloneModel(store: rig.model.store)
+            let records = restored.document.records
+            let initial = restored.feedbackMessage
+            try expect(initial.kind == .encouragement, "持久快照初始化不能闪更新时间或常驻时间")
+            try expect(restored.buddyFeedback.lastObservedAt == QuotaPresentation(document: restored.document).observedAt,
+                       "持久快照应建立去重基线")
+            try expect(restored.buddyFeedback.nextTransition(after: restored.now) == nil,
+                       "恢复快照不应创建刷新倒计时")
+            restored.now = restored.now.addingTimeInterval(60)
+            restored.appearance = .dark
+            restored.showDailyTokens = false
+            try expect(restored.feedbackMessage == initial, "时钟、外观或显示开关不应重排激励或制造刷新")
+            try expect(restored.document.records == records, "恢复和显示更新不能改变额度数据")
+            try expect(!restored.collector.isRunning && !restored.collector.isBusy, "恢复模型不能自动启动真实采集")
+        }
+
+        // 13. The animation can finish at 2.4s while its encouragement remains
+        // readable for 5.5s. Advance the model clock without real timer waits.
+        do {
+            let rig = try InteractionRig(parent: directory, name: "feedback-play-reading-time")
+            try rig.accept(rig.snapshot(80))
+            let records = rig.model.document.records
+            rig.model.play(.pat)
+            let start = rig.model.now
+            let response = rig.model.feedbackMessage
+            try expect(response.kind == .interaction && !response.text.isEmpty, "手动互动应立即给出激励回应")
+            try expect(response.text.count <= 20, "激励句应适配两行小组件反馈区")
+            try expect(rig.model.buddyActivity?.duration == 2.4, "摸头动作应保持原有有限动画时长")
+            rig.model.now = start.addingTimeInterval(3)
+            rig.model.buddyActivity = nil // The same cleanup performed by the model's clock.
+            try expect(rig.model.feedbackMessage == response, "2.4秒动作结束不能过早移除激励文案")
+            rig.model.now = start.addingTimeInterval(5.499)
+            try expect(rig.model.feedbackMessage == response, "激励回应应留足5.5秒阅读时间")
+            rig.model.now = start.addingTimeInterval(5.5)
+            try expect(rig.model.feedbackMessage.kind == .encouragement, "阅读期结束后应恢复日常激励而非更新时间")
+            try expect(rig.model.document.records == records, "激励与动作结束均不应修改额度或读取时间")
+        }
+
+        // 14. A real ingestion path with a newer official observation flashes
+        // its exact update time, then returns to encouragement after 2.4s.
+        do {
+            let rig = try InteractionRig(parent: directory, name: "feedback-fresh-observation")
+            try rig.accept(rig.snapshot(80))
+            let originalObservation = rig.value.observedAt
+            try rig.accept(rig.snapshot(80, seconds: 1))
+            let start = rig.model.now
+            let observed = rig.value.observedAt
+            let response = rig.model.feedbackMessage
+            try expect(observed != nil && observed! > originalObservation!, "可信刷新应实际接收更晚的采样时间")
+            try expect(response.kind == .refresh, "新可信采样应通过collector回调短显更新时间")
+            try expect(response.text.contains(observed!.formatted(date: .omitted, time: .standard)),
+                       "刷新短显必须使用实际接收的额度采样时间")
+            try expect(rig.model.buddyActivity == nil && rig.value.remainingPercent == 80,
+                       "相同额度的成功刷新只显示读取反馈，不能制造进食或消耗")
+            rig.model.now = start.addingTimeInterval(2.399)
+            try expect(rig.model.feedbackMessage.kind == .refresh, "更新时间不能闪得无法读到")
+            rig.model.now = start.addingTimeInterval(2.4)
+            let idle = rig.model.feedbackMessage
+            try expect(idle.kind == .encouragement, "2.4秒后更新时间应让位给日常激励")
+            rig.model.now = start.addingTimeInterval(60)
+            try expect(rig.model.feedbackMessage == idle, "无新事件时激励应稳定，更新时间不能重新出现")
+        }
+
+        // 15. Replay the collector callback against a persisted baseline. No
+        // elapsed-time sleep is needed to prove old data cannot start a flash.
+        do {
+            let rig = try InteractionRig(parent: directory, name: "feedback-no-replay")
+            try rig.accept(rig.snapshot(80, seconds: 2))
+            let restored = StandaloneModel(store: rig.model.store)
+            guard let callback = restored.collector.onSnapshot else {
+                throw InteractionVerificationFailure(description: "恢复模型应保留合成采集回调")
+            }
+            let feedback = restored.buddyFeedback
+            let records = restored.document.records
+            try callback(rig.snapshot(80, seconds: 2))
+            try callback(rig.snapshot(60, seconds: 1))
+            try callback(rig.snapshot(50, seconds: 2))
+            try expect(restored.feedbackMessage.kind == .encouragement, "重复、旧或同时间冲突快照不能再闪更新时间")
+            try expect(restored.buddyFeedback == feedback, "被拒绝的重放不能更改激励序号或刷新截止时间")
+            try expect(restored.document.records == records, "旧回调不能覆盖已保存额度")
+            try expect(!restored.collector.isRunning && !restored.collector.isBusy, "回放检查不能启动Codex采集")
+        }
+
+        // 16. Persistent collection errors have higher priority than idle,
+        // refresh and interaction messages, so friendly copy cannot hide them.
+        do {
+            let rig = try InteractionRig(parent: directory, name: "feedback-error-priority")
+            try rig.accept(rig.snapshot(80))
+            rig.model.error = "合成读取失败"
+            try expect(rig.model.feedbackMessage.kind == .error, "读取错误必须覆盖刷新成功短显")
+            rig.model.play(.celebrate)
+            let start = rig.model.now
+            try expect(rig.model.feedbackMessage.kind == .error, "互动激励不能覆盖实际读取错误")
+            try expect(rig.model.feedbackMessage.text.contains("读取失败"), "错误反馈应保留可发现的失败说明")
+            rig.model.error = nil
+            try expect(rig.model.feedbackMessage.kind == .interaction, "错误解除后应保留仍在阅读期内的互动回应")
+            rig.model.now = start.addingTimeInterval(6)
+            try expect(rig.model.feedbackMessage.kind == .encouragement, "互动结束后应恢复日常鼓励")
+            rig.model.error = "合成持续读取失败"
+            try expect(rig.model.feedbackMessage.kind == .error, "持续错误不能被日常鼓励隐藏")
+
+            // Exercise actual collector failure paths without launching a CLI.
+            rig.model.error = nil
+            let callback = rig.model.collector.onSnapshot
+            rig.model.collector.onSnapshot = nil
+            rig.model.collector.start()
+            try expect(rig.model.collector.quotaError != nil, "无法连接存储时必须暴露额度采集错误")
+            try expect(!rig.model.collector.isRunning && !rig.model.collector.isBusy,
+                       "缺少存储回调的失败检查不得尝试启动真实Codex")
+            rig.model.collector.onSnapshot = callback
+            let records = rig.model.document.records
+            rig.model.collector.shellTestReceiveQuota(nil, observedAt: rig.base.addingTimeInterval(1))
+            try expect(rig.model.collector.quotaError != nil, "额度暂不可读时应保留独立的额度错误")
+            try expect(rig.model.feedbackMessage.kind == .error, "原额度仍新鲜时，采集失败也不能被鼓励隐藏")
+            try expect(rig.model.document.records == records, "失败采集必须保留上次有效额度")
+            let failure = rig.model.collector.quotaError
+            rig.model.collector.pause()
+            try expect(rig.model.collector.quotaError == failure, "暂停状态不能清掉尚未解决的具体错误")
+            rig.model.collector.shellTestReceiveQuota(Data("{broken-fixture".utf8),
+                                                     observedAt: rig.base.addingTimeInterval(2))
+            try expect(rig.model.collector.quotaError != nil, "不可验证的额度响应不能清除错误")
+            let valid = try JSONSerialization.data(withJSONObject: ["rateLimitsByLimitId": ["codex": [
+                "primary": ["usedPercent": 20, "windowDurationMins": 300,
+                            "resetsAt": Int(rig.reset.timeIntervalSince1970)],
+                "secondary": ["usedPercent": 50, "windowDurationMins": 10_080,
+                              "resetsAt": Int(rig.reset.timeIntervalSince1970)]
+            ]]])
+            rig.model.collector.shellTestReceiveQuota(valid, observedAt: rig.base.addingTimeInterval(3))
+            try expect(rig.model.collector.quotaError == nil, "可验证的新额度成功保存后才清除额度错误")
+            try expect(rig.model.collector.tokenUsageState == .unsupported,
+                       "Token接口不可用状态应独立保留，不能伪称Token也成功")
+            try expect(rig.model.feedbackMessage.kind != .error, "额度恢复后，独立的Token不支持不能继续遮挡额度激励")
+            rig.model.collector.onSnapshot = { _ in throw InteractionVerificationFailure(description: "合成存储拒绝") }
+            rig.model.collector.shellTestReceiveQuota(valid, observedAt: rig.base.addingTimeInterval(4))
+            try expect(rig.model.collector.quotaError?.contains("保存失败") == true,
+                       "存储拒绝不能报告额度刷新成功或清空错误")
+            rig.model.collector.onSnapshot = callback
+            rig.model.collector.shellTestReceiveQuota(valid, observedAt: rig.base.addingTimeInterval(5))
+            try expect(rig.model.collector.quotaError == nil && !rig.model.collector.isRunning && !rig.model.collector.isBusy,
+                       "恢复成功应清除额度错误，所有验证仍不得启动真实采集")
         }
 
     }

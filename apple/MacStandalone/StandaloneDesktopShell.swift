@@ -62,6 +62,9 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
         desktopHost = NSHostingView(rootView: DesktopCardChrome(model: model))
+        // AppKit owns the widget's fixed outer frame. SwiftUI intrinsic-size
+        // updates must not resize the panel before we preserve its top anchor.
+        desktopHost.sizingOptions = []
         desktopHost.wantsLayer = true
         desktopHost.layer?.backgroundColor = NSColor.clear.cgColor
         panel.contentView = desktopHost
@@ -272,24 +275,22 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
         // without replacing a menu anchor or closing the settings surface.
         if let desktopHost, let panel {
             desktopHost.layoutSubtreeIfNeeded()
-            let fitting = desktopHost.fittingSize
             let old = panel.frame
             let size = NSSize(width: StandaloneLayout.desktopWidth(style: model.displayStyle, compact: model.compact),
-                              height: max(StandaloneLayout.minimumHeight(style: model.displayStyle), ceil(fitting.height)))
+                              height: StandaloneLayout.height)
             if abs(old.height - size.height) > 0.5 || old.width != size.width {
                 panel.setContentSize(size)
                 panel.setFrameOrigin(NSPoint(x: old.minX, y: old.maxY - size.height))
-                keepCardOnScreen()
                 if persistsPreferences, panel.frameAutosaveName != NSWindow.FrameAutosaveName("") {
                     panel.saveFrame(usingName: panel.frameAutosaveName)
                 }
             }
+            keepCardOnScreen()
         }
         if let popoverHost, let popover {
             popoverHost.view.layoutSubtreeIfNeeded()
-            let fitting = popoverHost.view.fittingSize
             popover.contentSize = NSSize(width: StandaloneLayout.cardWidth(compact: model.compact),
-                                        height: max(StandaloneLayout.minimumHeight(style: .card), ceil(fitting.height)))
+                                        height: StandaloneLayout.height)
         }
     }
 
@@ -463,8 +464,7 @@ private struct DesktopCardChrome: View {
     var body: some View {
         StandalonePanelView(model: model, surface: .desktop)
             .preferredColorScheme(model.appearance.colorScheme)
-            .background(QuotaPalette.surface)
-            .clipShape(RoundedRectangle(cornerRadius: model.displayStyle == .duo ? 24 : 18,
+            .clipShape(RoundedRectangle(cornerRadius: StandaloneLayout.cornerRadius,
                                         style: .continuous))
 
     }

@@ -21,6 +21,9 @@ final class CodexQuotaCollector: NSObject, ObservableObject {
     @Published private(set) var tokenUsageLastSuccessAt: Date?
 
     @Published private(set) var status = "准备连接本机 Codex"
+    /// The quota endpoint's last unresolved failure. Token failures stay separate.
+    /// A retry attempt or pause does not hide this; only a saved quota clears it.
+    @Published private(set) var quotaError: String?
     @Published private(set) var lastAttemptAt: Date?
     @Published private(set) var lastSuccessAt: Date?
     @Published private(set) var nextRefreshAt: Date?
@@ -109,10 +112,12 @@ final class CodexQuotaCollector: NSObject, ObservableObject {
     private func canStart() -> Bool {
         guard onSnapshot != nil else {
             status = "尚未连接本机额度存储"
+            quotaError = status
             return false
         }
         guard executableURL() != nil else {
             status = "未找到本机 Codex，请先安装并登录 Codex"
+            quotaError = status
             return false
         }
         return true
@@ -179,6 +184,7 @@ final class CodexQuotaCollector: NSObject, ObservableObject {
                 guard let onSnapshot else { throw CodexRPCFailure.protocolFailure }
                 try onSnapshot(snapshot)
                 lastSuccessAt = snapshot.observedAt
+                quotaError = nil
                 consecutiveFailures = 0
                 if case .failure(.rateLimited) = batch.tokenUsage {
                     throttleUntil = Date().addingTimeInterval(interval)
@@ -201,11 +207,13 @@ final class CodexQuotaCollector: NSObject, ObservableObject {
                 resumeAfterSleep = false
                 needsLogin = true
                 status = "请先在 Codex 中登录账户，再重新连接"
+                quotaError = status
             case .unsupported:
                 stopWork()
                 isRunning = false
                 resumeAfterSleep = false
                 status = "本机 Codex 暂不支持额度读取，请检查版本"
+                quotaError = status
             case .rateLimited:
                 failAttempt("Codex 暂时限流，刷新间隔已延长", retryAfter: 60)
             case .launchFailed:
@@ -262,6 +270,16 @@ final class CodexQuotaCollector: NSObject, ObservableObject {
         tokenUsageLastSuccessAt = snapshot.observedAt
         tokenUsageStatus = "合成 UI 测试数据"
     }
+
+    /// Exercises the real quota decoding/acceptance/error path with explicit
+    /// fixture data. Nil simulates an unavailable quota endpoint; no CLI starts.
+    func shellTestReceiveQuota(_ data: Data?, observedAt: Date) {
+        precondition(!isRunning && !isBusy && lastAttemptAt == nil)
+        let quota: Result<CodexRPCSample, CodexRPCFailure> = data.map {
+            .success(.init(data: $0, observedAt: observedAt))
+        } ?? .failure(.unavailable)
+        received(.init(quota: quota, tokenUsage: .failure(.unsupported)))
+    }
     #endif
 
     private func finishAttempt() {
@@ -278,6 +296,7 @@ final class CodexQuotaCollector: NSObject, ObservableObject {
     }
 
     private func failAttempt(_ message: String, retryAfter: TimeInterval? = nil) {
+        quotaError = message
         finishAttempt()
         consecutiveFailures = min(7, consecutiveFailures + 1)
         let delay = retryAfter ?? min(300, interval * pow(2, Double(consecutiveFailures - 1)))

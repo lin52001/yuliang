@@ -14,11 +14,14 @@ private struct ShellCheckFailure: Error, CustomStringConvertible {
 
 @main
 struct DesktopShellCheck {
+    private static let expectedCardSize = NSSize(width: 344, height: 160)
+    private static let expectedDuoSize = NSSize(width: 160, height: 160)
+
     @MainActor
     static func main() {
         do {
             try runChecks()
-            print("PASS desktop shell: independent readable settings panel, persistent continuous controls and callbacks, smaller card/Duo styles, icon-only menu status, borderless, shared model, free drag/position lock, visible native character picker, independent Token display, light/dark/system appearance, popover lifecycle, fitting size, desktop level, hide/recall; collector stayed paused")
+            print("PASS desktop shell: independent readable settings panel, persistent continuous controls and callbacks, fixed widget-sized card/Duo styles, icon-only menu status, borderless, shared model, free drag/position lock, visible native character picker, independent Token display, light/dark/system appearance, popover lifecycle, stable geometry, desktop level, hide/recall; collector stayed paused")
             exit(0)
         } catch {
             fputs("FAIL desktop shell: \(error)\n", stderr)
@@ -235,6 +238,7 @@ struct DesktopShellCheck {
         let dailyBefore = model.showDailyTokens
         let lifetimeBefore = model.showLifetimeTokens
         let appearanceBefore = model.appearance
+        let widgetSize = desktop.frame.size
         let panel = try openSettings(on: desktop)
         defer {
             StandaloneSettingsPresenter.close()
@@ -267,6 +271,8 @@ struct DesktopShellCheck {
             settle(0.22)
             try require(StandaloneSettingsPresenter.shellTestPanel === panel && isOnScreen(panel),
                         "settings panel disappeared during model or collector publications")
+            try require(desktop.frame.size == widgetSize,
+                        "a model/collector publication resized the fixed widget beneath settings")
             _ = try settingsButton("display.dailyTokens", in: panel)
         }
         // Both changes happen inside one continuously visible surface.
@@ -274,6 +280,8 @@ struct DesktopShellCheck {
         try pressSetting("display.lifetimeTokens", in: panel)
         try require(model.showDailyTokens != dailyBefore && model.showLifetimeTokens != lifetimeBefore,
                     "continuous settings selections did not independently change both Token preferences")
+        try require(desktop.frame.size == widgetSize,
+                    "continuous Token preference changes resized the fixed widget")
         try pressSetting("display.dailyTokens", in: panel)
         try pressSetting("display.lifetimeTokens", in: panel)
         try pressSetting("back", in: panel)
@@ -284,6 +292,11 @@ struct DesktopShellCheck {
         try pressSetting("interaction." + BuddyAction.dance.rawValue, in: panel)
         try require(model.buddyActivity?.action == .dance && model.buddyActivity?.source == .play,
                     "settings interaction did not dispatch the selected action")
+        try require(desktop.frame.size == widgetSize,
+                    "an interaction response resized the fixed widget")
+        if let content = desktop.contentView {
+            try render(content, named: "native-\(prefix)-interaction-feedback.png")
+        }
         model.buddyActivity = nil
         try pressSetting("back", in: panel)
         if capturePages {
@@ -362,9 +375,9 @@ struct DesktopShellCheck {
                 let host = NSHostingView(rootView: VStack(spacing: 12) {
                     QuotaCard(document: document, now: now, compact: true, minimal: true, slim: true)
                     QuotaDuoGauge(document: document, now: now)
-                }.padding(12).frame(width: 264).background(QuotaPalette.surface)
+                }.padding(12).frame(width: expectedCardSize.width).background(QuotaPalette.surface)
                     .environment(\.colorScheme, dark ? .dark : .light))
-                let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 264, height: 180),
+                let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: expectedCardSize.width, height: 180),
                                       styleMask: [.borderless], backing: .buffered, defer: false)
                 window.isReleasedWhenClosed = false
                 window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
@@ -383,6 +396,17 @@ struct DesktopShellCheck {
     @MainActor
     private static func runChecks() throws {
         try checkDuoGeometry()
+        for compact in [true, false] {
+            try require(StandaloneLayout.cardWidth(compact: compact) == expectedCardSize.width
+                        && StandaloneLayout.desktopWidth(style: .card, compact: compact) == expectedCardSize.width
+                        && StandaloneLayout.desktopWidth(style: .duo, compact: compact) == expectedDuoSize.width,
+                        "card/Duo layout no longer uses the fixed widget width for both density preferences")
+        }
+        try require(StandaloneLayout.minimumHeight(style: .card) == expectedCardSize.height
+                    && StandaloneLayout.minimumHeight(style: .duo) == expectedDuoSize.height,
+                    "card/Duo layout no longer uses the fixed widget height")
+        try require(StandaloneLayout.cornerRadius == 22,
+                    "card/Duo layout no longer shares the 22-point widget corner radius")
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
         app.finishLaunching()
@@ -444,14 +468,15 @@ struct DesktopShellCheck {
             try require(trigger.title == "设置" && trigger.bounds.width >= 36 && trigger.bounds.height >= 18,
                         "compact card settings trigger lost its readable title or usable bounds")
             try checkPersistentSettings(model: model, desktop: panel, tokens: syntheticTokens, prefix: "card", capturePages: true)
-            settle(0.3) // Restore the test's Token preference before measuring fitting size.
+            settle(0.3) // Restore Token preferences before checking fixed widget geometry.
         } else { throw ShellCheckFailure(description: "compact card has no native settings button") }
         try require(model.desktopVisible && panel.isVisible, "desktop card cannot be shown")
         try require(panel.level == .floating, "default desktop card should be floating")
         let compactHeight = panel.frame.height
-        try require(panel.frame.width == 264 && compactHeight >= 100 && compactHeight < 215,
-                    "compact card did not become smaller than the previous 320-by-215-point surface")
-        // Visibility preferences alter rendered rows and fitting size only.
+        try require(panel.frame.size == expectedCardSize,
+                    "card did not adopt its fixed 344-by-160-point widget size")
+        // Visibility preferences alter rendered rows without resizing either
+        // widget surface or changing the underlying collection state.
         // The same paused collector and both underlying readings stay intact.
         let allTokensHeight = panel.frame.height
         let allTokensMenuHeight = shell.shellTestPopover.contentSize.height
@@ -474,15 +499,15 @@ struct DesktopShellCheck {
         model.showDailyTokens = false
         settle(0.3)
         try render(tokenCardView, named: "native-main-no-tokens.png")
-        try require(panel.frame.height <= allTokensHeight - 20
-                    && shell.shellTestPopover.contentSize.height <= allTokensMenuHeight - 20,
-                    "hiding both Token counters left an empty row instead of shrinking both surfaces")
+        try require(panel.frame.size == expectedCardSize
+                    && abs(shell.shellTestPopover.contentSize.height - allTokensMenuHeight) <= 1,
+                    "hiding both Token counters changed a widget surface's fixed size")
         model.showDailyTokens = true
         model.showLifetimeTokens = true
         settle(0.3)
         try require(abs(panel.frame.height - allTokensHeight) <= 1
                     && abs(shell.shellTestPopover.contentSize.height - allTokensMenuHeight) <= 1,
-                    "restoring both Token values did not restore natural card sizing")
+                    "restoring both Token values changed a widget surface's fixed size")
 
         // Changing style resizes the actual native desktop window while the
         // menu popover keeps its full card. Neither surface owns a new reader.
@@ -490,8 +515,8 @@ struct DesktopShellCheck {
         try setting(["小组件样式", "Duo 圆环"], shell: shell)
         settle(0.4)
         try require(model.displayStyle == .duo, "native Duo style action did not update the shared model")
-        try require(panel.frame.width == 104 && panel.frame.height >= 80,
-                    "Duo did not adopt the small icon-style desktop width")
+        try require(panel.frame.size == expectedDuoSize,
+                    "Duo did not adopt its fixed 160-by-160-point small-widget size")
         if let content = panel.contentView,
            let trigger = descendant(content, identifier: "yuliang.settings.button") as? NSButton {
             try require(trigger.title == "设置" && trigger.bounds.width >= 36 && trigger.bounds.height >= 18,
@@ -503,7 +528,7 @@ struct DesktopShellCheck {
                     "Duo desktop footprint is not materially smaller than the compact card")
         try require(abs(panel.frame.maxY - beforeDuo.maxY) <= 1 && abs(panel.frame.minX - beforeDuo.minX) <= 1,
                     "switching from card to Duo moved the remembered top-left position")
-        try require(abs(shell.shellTestPopover.contentSize.width - 264) <= 1,
+        try require(abs(shell.shellTestPopover.contentSize.width - expectedCardSize.width) <= 1,
                     "Duo mode incorrectly shrank the detailed menu popover to icon width")
         guard let statusButton = shell.shellTestStatusButton else {
             throw ShellCheckFailure(description: "Duo status button is missing")
@@ -520,19 +545,20 @@ struct DesktopShellCheck {
         settle(0.3)
         let duoLifetimeOnly = try render(tokenCardView, named: "native-duo-lifetime-only.png")
         let duoSingleHeight = panel.frame.height
-        try require(duoSingleHeight <= duoBothHeight - 10 && pixelDifference(duoBoth, duoLifetimeOnly) > 0.002,
-                    "Duo daily switch did not remove its own Token row and tighten the native window (both=\(duoBothHeight), single=\(duoSingleHeight), fitting=\(tokenCardView.fittingSize.height), tracking=\(StandaloneMenuTracking.isActive))")
+        try require(panel.frame.size == expectedDuoSize && abs(duoSingleHeight - duoBothHeight) <= 1
+                    && pixelDifference(duoBoth, duoLifetimeOnly) > 0.002,
+                    "Duo daily switch did not independently hide its Token content while preserving fixed geometry")
         model.showDailyTokens = true
         model.showLifetimeTokens = false
         settle(0.3)
         let duoDailyOnly = try render(tokenCardView, named: "native-duo-daily-only.png")
         try require(abs(panel.frame.height - duoSingleHeight) <= 1 && pixelDifference(duoDailyOnly, duoLifetimeOnly) > 0.001,
-                    "Duo single-counter choices are not independently rendered at the same natural size")
+                    "Duo single-counter choices are not independently rendered at the same fixed size")
         model.showDailyTokens = false
         settle(0.3)
         try render(tokenCardView, named: "native-duo-no-tokens.png")
-        try require(panel.frame.height <= duoBothHeight - 24,
-                    "Duo left empty Token rows after both counters were hidden")
+        try require(panel.frame.size == expectedDuoSize,
+                    "hiding both Duo Token counters changed the fixed small-widget size")
         model.showDailyTokens = true
         model.showLifetimeTokens = true
         try setting(["外观", "浅色"], shell: shell)
@@ -554,7 +580,7 @@ struct DesktopShellCheck {
         shell.shellTestTogglePopover()
         settle(0.3)
         try require(!panel.isVisible && shell.shellTestPopover.isShown
-                    && abs(shell.shellTestPopover.contentSize.width - 264) <= 1,
+                    && abs(shell.shellTestPopover.contentSize.width - expectedCardSize.width) <= 1,
                     "hiding Duo prevented the menu icon from opening the full compact card")
         if let view = shell.shellTestPopover.contentViewController?.view {
             try render(view, named: "native-duo-menubar-card.png")
@@ -562,7 +588,7 @@ struct DesktopShellCheck {
         model.onShowDesktop?()
         settle(0.3)
         try require(panel.isVisible && model.desktopVisible && model.displayStyle == .duo
-                    && panel.frame.width == 104 && !shell.shellTestPopover.isShown,
+                    && panel.frame.size == expectedDuoSize && !shell.shellTestPopover.isShown,
                     "menu recall lost the Duo style or failed to restore the desktop icon")
         model.onChooseCharacter?(.desktop)
         settle(0.4)
@@ -574,18 +600,18 @@ struct DesktopShellCheck {
             throw ShellCheckFailure(description: "Duo window has no screen for restoring the wider card")
         }
         let visible = restoringScreen.visibleFrame
-        let expectedRestoredX = max(visible.minX, min(beforeRestoringCard.minX, visible.maxX - 264))
-        let expectedRestoredY = max(visible.minY, min(beforeRestoringCard.maxY - allTokensHeight,
-                                                    visible.maxY - allTokensHeight))
+        let expectedRestoredX = max(visible.minX, min(beforeRestoringCard.minX, visible.maxX - expectedCardSize.width))
+        let expectedRestoredY = max(visible.minY, min(beforeRestoringCard.maxY - expectedCardSize.height,
+                                                    visible.maxY - expectedCardSize.height))
         try setting(["小组件样式", "轻巧卡片"], shell: shell)
         settle(0.4)
         try require(!shell.shellTestCharacterPopover.isShown,
                     "style switching left a character popover anchored to the old geometry")
-        try require(panel.frame.width == 264 && abs(panel.frame.height - allTokensHeight) <= 1,
-                    "returning from Duo failed to restore the original compact card fitting size")
+        try require(panel.frame.size == expectedCardSize && abs(panel.frame.height - allTokensHeight) <= 1,
+                    "returning from Duo failed to restore the fixed medium-widget card size")
         try require(abs(panel.frame.minX - expectedRestoredX) <= 1
                     && abs(panel.frame.minY - expectedRestoredY) <= 1 && visible.contains(panel.frame),
-                    "returning from right-edge Duo failed to preserve its top anchor and keep the wider card on screen")
+                    "returning from right-edge Duo failed to preserve its top anchor and keep the wider card on screen; before=\(beforeRestoringCard), expectedOrigin=(\(expectedRestoredX), \(expectedRestoredY)), actual=\(panel.frame), visible=\(visible)")
         try require(shell.shellTestStatusButton?.image == nil && !(shell.shellTestStatusButton?.title ?? "").isEmpty,
                     "returning to card style failed to restore text menu-bar status")
         try require(ObjectIdentifier(model.collector) == collectorIdentity && model.document.records == originalRecords
@@ -742,12 +768,13 @@ struct DesktopShellCheck {
         model.compact = false
         settle()
         shell.shellTestResize()
-        try require(panel.frame.width == 300 && panel.frame.height >= compactHeight,
-                    "expanded card did not grow to its natural 300-point width")
+        try require(panel.frame.size == expectedCardSize && abs(panel.frame.height - compactHeight) <= 1,
+                    "changing card density resized the fixed medium-widget surface")
         model.compact = true
         settle()
         shell.shellTestResize()
-        try require(panel.frame.width == 264 && abs(panel.frame.height - compactHeight) <= 1, "compact size failed to restore")
+        try require(panel.frame.size == expectedCardSize && abs(panel.frame.height - compactHeight) <= 1,
+                    "restoring compact density resized the fixed medium-widget surface")
 
         model.pinned = false
         settle()
@@ -775,9 +802,10 @@ struct DesktopShellCheck {
         model.positionLocked = false
         settle()
         try require(panel.isMovable && panel.isMovableByWindowBackground, "shared popover model could not unlock the desktop card")
-        try require(abs(shell.shellTestPopover.contentSize.width - 264) <= 1, "popover width is not compact")
-        try require(shell.shellTestPopover.contentSize.height >= 100 && shell.shellTestPopover.contentSize.height < 215,
-                    "popover has an invalid fitting height")
+        try require(abs(shell.shellTestPopover.contentSize.width - expectedCardSize.width) <= 1,
+                    "popover lost its fixed medium-widget width")
+        try require(abs(shell.shellTestPopover.contentSize.height - expectedCardSize.height) <= 1,
+                    "popover lost its fixed medium-widget height")
         model.onChooseCharacter?(.menuBar)
         settle(0.6)
         try require(shell.shellTestCharacterPopover.isShown

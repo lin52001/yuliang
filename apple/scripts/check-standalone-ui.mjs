@@ -71,7 +71,7 @@ try {
 
   const interaction = path.join(scratch, 'check-standalone-interactions');
   await run('xcrun', [...linked, ...standalone, harnesses[0], '-o', interaction]);
-  await run(interaction, [], 'Standalone互动隔离验证通过：11组。');
+  await run(interaction, [], 'Standalone互动隔离验证通过：16组。');
 
   // Use a real test bundle so image-backed characters exercise the same Bundle
   // lookup and clipping layout as the shipped app, instead of vector fallbacks.

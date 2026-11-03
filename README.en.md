@@ -1,8 +1,10 @@
 # Yuliang · 余量
 
-A compact macOS companion for Codex quota and usage. Choose a 264-point card or a 104-point Duo ring. Your subscription quota, optional daily and lifetime Token statistics, and character share one state with the menu-bar popover. Appearance can follow the system or stay light or dark.
+A compact macOS companion for Codex quota and usage. Version 0.15.0 offers a fixed 344 × 160pt desktop card or a 160 × 160pt Duo ring. Your subscription quota, optional daily and lifetime Token statistics, and character share one state with the 344 × 160pt menu-bar popover. Appearance can follow the system or stay light or dark.
 
 Choose one of four anime-style themes—Star Sugar Dragon Girl, Orange Glow, Blue Whale, or Star Kitty—or five original companions: Mochi Cat, Butter Bunny, Mint Fox, Sesame Bear, and Cloud Sprite. Star Sugar is the default. When a newer, verified quota observation shows consumption, your buddy eats a biscuit and follows the progress bar. Eight interactions include patting, waving, napping, cheering, feeding, jumping, swaying, and spinning. Play never changes quota or Token statistics.
+
+An encouragement appears while idle. An accepted newer quota observation briefly shows its update time for about 2.4 seconds; interaction-specific encouragement stays for about 5.5 seconds. Errors and actionable read states take priority. Both styles use 22pt continuous corners, the system `regularMaterial` surface, and semantic text colors. These are Yuliang's design specifications, not universal macOS widget dimensions or exact colors. This remains a standalone native desktop window, not a WidgetKit system widget.
 
 [中文](README.md) · [Downloads](https://github.com/lin52001/yuliang/releases) · [What's new](CHANGELOG.md)
 
@@ -32,7 +34,7 @@ The separate settings panel stays open for consecutive changes. Close it when fi
 
 Requires macOS 14 or later and an installed, signed-in official Codex CLI.
 
-1. Open [Releases](https://github.com/lin52001/yuliang/releases). Download `Yuliang-v0.14.1-macOS-arm64.zip` for Apple Silicon or `Yuliang-v0.14.1-macOS-x86_64.zip` for Intel, if that asset is available. Check **Apple menu → About This Mac** if unsure.
+1. Open [Releases](https://github.com/lin52001/yuliang/releases). Download `Yuliang-v0.15.0-macOS-arm64.zip` for Apple Silicon or `Yuliang-v0.15.0-macOS-x86_64.zip` for Intel, if that asset is available. Check **Apple menu → About This Mac** if unsure.
 2. Extract the archive and move `余量.app` to `~/Applications` or `/Applications`.
 3. Open the app. Collection starts automatically; the app has no Dock icon.
 
@@ -68,11 +70,12 @@ The build produces `releases/余量.app` for the current machine's architecture 
 - Set always-on-top or desktop-level placement separately in the settings menu. Always-on-top and position locking are independent.
 - The minus button, or **收起桌面卡片** in settings, hides only the desktop widget. Duo uses the settings option. Background collection continues; show it again or explicitly move it back to the current screen from the popover. This menu action can reposition a locked card.
 - Use the character button to choose the four anime-style themes or five original companions. Your choice is saved locally.
-- Click the text-labelled **设置** button, then choose **轻巧卡片** or **Duo 圆环** under **小组件样式**. The independently sized settings panel shows labelled pages and keeps the choices open for repeated changes. Use Back or Close when finished. The compact card uses a 12-point continuous rail, fine quarter marks and a 36-point character. Duo adds fine scale marks and a subtle inner edge. The ring, percentage, and moving character use the same quota value; it does not invent battery or network readings. The choice is saved locally, and switching keeps the window position.
+- Click the text-labelled **设置** button, then choose the 344 × 160pt **轻巧卡片** or 160 × 160pt **Duo 圆环** under **小组件样式**. The menu-bar popover is 344 × 160pt. Both styles use 22pt continuous corners, system material, and semantic colors. The independently sized settings panel stays open for repeated changes; use Back or Close when finished. The card keeps a continuous fine rail, and Duo uses a marked ring. Fill, percentage, and moving character use the same real quota value. Switching preserves the top edge and keeps the window on screen. The compact setting changes internal spacing, not the outer frame size.
 - Duo uses a 20-point monochrome menu-bar ring. Click it to open the complete card; hide the desktop widget to use the menu-bar entry alone.
-- Daily and lifetime Token usage are both shown by default. Toggle **日 Token 用量** and **累计 Token 用量** independently under **显示内容** in settings. The card uses one row; Duo uses two narrow rows that collapse independently. Hover or open details for the server's daily date and full numbers. These switches control display only.
+- Daily and lifetime Token usage are both shown by default. Toggle **日 Token 用量** and **累计 Token 用量** independently under **显示内容** in settings. The card uses one row; Duo uses two narrow rows whose content collapses independently without resizing the outer frame. Hover or open details for the server's daily date and full numbers. These switches control display only.
 - Select system, light, or dark appearance under **外观**. Appearance and display preferences are saved locally.
 - Click the character for a random reaction. Right-click, open the bottom sparkle menu, or choose **互动** in settings for eight actions: pat, wave, nap, cheer, feed, jump, sway, or spin. Choose a character through the character button or **选择小伙伴** in settings. Play does not change quota, Token statistics, timestamps, or quota-derived satiety.
+- The footer normally shows encouragement. A successfully accepted newer quota observation shows its update time for about 2.4 seconds; hover or open details for the full time. Manual interactions show matching encouragement for about 5.5 seconds and take priority over the refresh flash. Expired refresh flashes are not replayed afterward. Failed reads, sign-in requirements, unknown or stale values, and resets awaiting confirmation take priority. Interactions, character changes, and display switches keep the outer frame fixed.
 - Choose **Settings → 立即刷新** to read immediately; the details window also offers refresh. Open **用量与额度详情** in settings for independent endpoint status and success times, quota windows, statistical scope, and pause/resume controls. Persistent hints and picker instructions are folded away.
 - Quit Yuliang from its menu to stop collection. Sleep pauses requests; waking resumes them.
 
