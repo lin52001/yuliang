@@ -39,30 +39,33 @@ try {
     const current = await readFile(path.join(output, 'Contents/Info.plist'), 'utf8');
     if (!current.includes(`<string>${bundleID}</string>`)) throw new Error('输出位置已有其他应用，拒绝覆盖。请使用 --output 指定新位置。');
   }
-  const originalAtlas = path.join(apple, 'Resources/original-buddies-v1.png');
-  if (!(await exists(originalAtlas))) throw new Error('缺少内置原创角色图集 apple/Resources/original-buddies-v1.png，请使用完整源码归档。');
+  const visualResources = ['original-buddies-v1.png', 'provider-codex.png'];
+  for (const name of visualResources) {
+    if (!(await exists(path.join(apple, 'Resources', name)))) {
+      throw new Error(`缺少内置界面资源 apple/Resources/${name}，请使用完整源码归档。`);
+    }
+  }
+  // The reference-derived atlas stays local until its redistribution rights
+  // are verified. Public builds use the characters' explicit vector fallbacks.
+  if (await exists(path.join(apple, 'Resources/new-buddies-v017.png'))) {
+    visualResources.push('new-buddies-v017.png');
+  }
   const architecture = process.arch === 'arm64' ? 'arm64' : 'x86_64';
   const base = ['swiftc', '-target', `${architecture}-apple-macosx14.0`, '-module-cache-path', cache];
   const core = (await readdir(path.join(apple, 'Sources/QuotaCore'))).filter(name => name.endsWith('.swift')).sort().map(name => `Sources/QuotaCore/${name}`);
   run('xcrun', [...base, '-parse-as-library', '-emit-module', '-emit-library', '-static', '-module-name', 'QuotaCore', ...core,
     '-emit-module-path', path.join(scratch, 'QuotaCore.swiftmodule'), '-o', path.join(scratch, 'libQuotaCore.a')]);
-  const app = ['CodexTokenUsage.swift', 'CodexQuotaCollector.swift', 'QuotaWebCollector.swift', 'ClaudeConnectionView.swift', 'StandaloneQuotaStore.swift', 'YuliangStandaloneApp.swift', 'StandaloneDesktopShell.swift'].map(name => `MacStandalone/${name}`);
+  const app = ['CodexTokenUsage.swift', 'CodexQuotaCollector.swift', 'QuotaWebCollector.swift', 'ClaudeConnectionView.swift', 'StandaloneQuotaStore.swift', 'StandalonePluginBridge.swift', 'YuliangStandaloneApp.swift', 'StandaloneDesktopShell.swift'].map(name => `MacStandalone/${name}`);
   run('xcrun', [...base, '-parse-as-library', '-D', 'YULIANG_STANDALONE', '-I', scratch, '-L', scratch, '-lQuotaCore',
     'Shared/OriginalBuddy.swift', 'Shared/QuotaCard.swift', ...app, '-o', path.join(contents, 'MacOS/YuliangStandalone')]);
   const resources = [
     copyFile(path.join(apple, 'MacStandalone/Info.plist'), path.join(contents, 'Info.plist')),
-    copyFile(originalAtlas, path.join(contents, 'Resources/original-buddies-v1.png')),
+    ...visualResources.map(name => copyFile(path.join(apple, 'Resources', name), path.join(contents, 'Resources', name))),
     copyFile(path.join(root, 'extension/parser.js'), path.join(contents, 'Resources/parser.js')),
   ];
   for (const [source, name] of [['LICENSE', 'LICENSE.txt'], ['ASSETS.md', 'ASSETS.md']]) {
     const document = path.join(root, source);
     if (await exists(document)) resources.push(copyFile(document, path.join(contents, 'Resources', name)));
-  }
-  // An optional, local-only legacy theme is never included in the public source
-  // export. Public release packaging also rejects this private prototype atlas.
-  const privateAtlas = path.join(apple, 'Resources/anime-satiety-atlas-v1.png');
-  if (await exists(privateAtlas)) {
-    resources.push(copyFile(privateAtlas, path.join(contents, 'Resources/anime-satiety-atlas-v1.png')));
   }
   await Promise.all(resources);
   run('plutil', ['-lint', path.join(contents, 'Info.plist')]);

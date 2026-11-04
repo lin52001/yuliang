@@ -1,9 +1,9 @@
 {
   "name": "yuliang-quota-monitor",
-  "version": "0.16.0",
+  "version": "0.17.0",
   "private": true,
   "type": "module",
-  "description": "A tiny native macOS Codex and Claude quota widget with original animated buddies.",
+  "description": "A tiny native macOS Codex and Claude quota widget with animated character companions.",
   "license": "MIT",
   "engines": {
     "node": ">=20"
@@ -21,6 +21,9 @@
     "build:mac": "node apple/scripts/build-standalone.mjs",
     "install:mac": "node apple/scripts/install-standalone.mjs",
     "release:mac": "node apple/scripts/package-release.mjs",
+    "test:plugin": "node --test tests/plugin*.test.mjs",
+    "release:plugin": "node scripts/package-plugin.mjs",
+    "check:plugin-bridge": "node apple/scripts/check-plugin-bridge.mjs",
     "mac:test": "npm test",
     "mac:check": "npm run check",
     "mac:build": "npm run build:mac",

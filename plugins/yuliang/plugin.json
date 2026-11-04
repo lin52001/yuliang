@@ -1,0 +1,22 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "yuliang",
+  "version": "0.1.0-beta.1",
+  "description": "连接本机余量小组件，查看 Codex 与 Claude 额度和 Token 用量，并与桌面小伙伴互动。",
+  "license": "MIT",
+  "keywords": ["quota", "codex", "claude", "macos", "companion"],
+  "extensions": {
+    "com.openai": {
+      "requires_local_executor": true,
+      "interface": {
+        "displayName": "余量",
+        "shortDescription": "额度、Token 和可互动的小伙伴",
+        "longDescription": "复用本机余量 App 的 60 秒采集，从 Codex 查询额度、刷新、切换角色与外观。人物界面使用原生桌面卡片。",
+        "category": "Productivity",
+        "capabilities": ["Read", "Write"],
+        "defaultPrompt": ["看看我的 AI 额度和 Token 用量", "显示余量小组件，让小伙伴鼓励我一下"],
+        "brandColor": "#AA96C5"
+      }
+    }
+  }
+}

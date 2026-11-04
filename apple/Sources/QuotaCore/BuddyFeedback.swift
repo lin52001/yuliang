@@ -27,6 +27,7 @@ public struct BuddyFeedbackState: Equatable, Sendable {
     private var refreshVisibleUntil: Date?
     private var interactionVisibleUntil: Date?
     private var action: BuddyAction = .idle
+    private var interactionCharacter: QuotaCharacter?
     private var interactionSequence: Int = 0
     private var encouragementSequence: Int
     private var companionVisibleUntil: Date?
@@ -53,9 +54,10 @@ public struct BuddyFeedbackState: Equatable, Sendable {
 
     /// Every completed choice receives enough reading time, including reduced-motion
     /// interactions. The visual animation may finish earlier without removing its words.
-    public mutating func interact(_ newAction: BuddyAction, now: Date) {
+    public mutating func interact(_ newAction: BuddyAction, now: Date, character: QuotaCharacter? = nil) {
         guard newAction != .idle, Self.isFinite(now) else { return }
         action = newAction
+        interactionCharacter = character
         interactionVisibleUntil = now.addingTimeInterval(Self.interactionDuration)
         interactionSequence &+= 1
         encouragementSequence &+= 1
@@ -77,11 +79,16 @@ public struct BuddyFeedbackState: Equatable, Sendable {
 
     /// Error visibility is retained; otherwise a tap takes priority over the refresh flash.
     /// Identical calls return identical text, so ticking a clock cannot shuffle the footer.
-    public func message(at now: Date, refreshTimeLabel: String, error: String? = nil) -> BuddyFeedbackMessage {
+    public func message(at now: Date, refreshTimeLabel: String, error: String? = nil,
+                        character: QuotaCharacter? = nil) -> BuddyFeedbackMessage {
         if let error = error?.trimmingCharacters(in: .whitespacesAndNewlines), !error.isEmpty {
             return .init(kind: .error, text: error, symbol: "exclamationmark.circle")
         }
         if let until = interactionVisibleUntil, now < until {
+            if let character = interactionCharacter, action == character.signatureAction || action == .celebrate {
+                return .init(kind: .interaction, text: character.signatureCaption(variant: interactionSequence),
+                             symbol: character.signatureSymbol)
+            }
             let phrases = Self.phrases(for: action)
             return .init(kind: .interaction, text: phrases[Self.index(interactionSequence, count: phrases.count)],
                          symbol: action.symbol)
@@ -91,6 +98,10 @@ public struct BuddyFeedbackState: Equatable, Sendable {
             return .init(kind: .refresh, text: time.isEmpty ? "额度已更新" : "刚刚更新 · \(time)", symbol: "arrow.clockwise")
         }
         if let until = companionVisibleUntil, now < until, let companionMessage { return companionMessage }
+        if let character {
+            return .init(kind: .encouragement, text: character.signatureCaption(variant: encouragementSequence),
+                         symbol: character.signatureSymbol)
+        }
         let phrases = Self.phrases(for: .idle)
         return .init(kind: .encouragement,
                      text: phrases[Self.index(encouragementSequence, count: phrases.count)], symbol: "heart")

@@ -1,0 +1,20 @@
+{
+  "name": "yuliang-local",
+  "interface": {
+    "displayName": "余量 · Yuliang"
+  },
+  "plugins": [
+    {
+      "name": "yuliang",
+      "source": {
+        "source": "local",
+        "path": "./plugins/yuliang"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

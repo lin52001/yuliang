@@ -8,7 +8,7 @@ struct BuddyCompanionTests {
     @Test func seededScheduleIsQuietVariedAndCannotFabricateAMeal() throws {
         var schedule = BuddyCompanionSchedule(now: now, seed: 42)
         var replay = BuddyCompanionSchedule(now: now, seed: 42)
-        #expect((35...60).contains(schedule.nextDueAt.timeIntervalSince(now)))
+        #expect((26...34).contains(schedule.nextDueAt.timeIntervalSince(now)))
         var emitted: [(Int, BuddyCompanionMoment)] = []
         for second in 1...1_200 {
             let time = now.addingTimeInterval(Double(second))
@@ -17,10 +17,10 @@ struct BuddyCompanionTests {
             #expect(result == replayed)
             if let result { emitted.append((second, result)) }
         }
-        try #require(emitted.count >= 8 && emitted.count <= 18)
-        #expect((35...60).contains(emitted[0].0))
+        try #require(emitted.count >= 35 && emitted.count <= 46)
+        #expect((26...34).contains(emitted[0].0))
         for pair in zip(emitted, emitted.dropFirst()) {
-            #expect((70...130).contains(pair.1.0 - pair.0.0))
+            #expect((26...34).contains(pair.1.0 - pair.0.0))
             #expect(pair.1.1.action != pair.0.1.action)
         }
         for (_, result) in emitted {
@@ -44,15 +44,15 @@ struct BuddyCompanionTests {
             let resume = now.addingTimeInterval(201)
             let resumed = schedule.tick(now: resume)
             #expect(resumed == nil)
-            #expect((35...60).contains(schedule.nextDueAt.timeIntervalSince(resume)))
-            for second in 1...34 {
+            #expect((26...34).contains(schedule.nextDueAt.timeIntervalSince(resume)))
+            for second in 1...25 {
                 let result = schedule.tick(now: resume.addingTimeInterval(Double(second)))
                 #expect(result == nil)
             }
         }
     }
 
-    @Test func busyInteractionsDelayAndManualPlayRestartsTheLongQuietInterval() {
+    @Test func busyInteractionsDelayAndManualPlayRestartsThirtySecondQuietInterval() {
         var schedule = BuddyCompanionSchedule(now: now, seed: 3)
         for second in 1...200 {
             let result = schedule.tick(now: now.addingTimeInterval(Double(second)), context: .init(isBusy: true))
@@ -61,13 +61,13 @@ struct BuddyCompanionTests {
         #expect(schedule.nextDueAt >= now.addingTimeInterval(212))
         let tapped = now.addingTimeInterval(201)
         schedule.postpone(after: tapped)
-        #expect((70...130).contains(schedule.nextDueAt.timeIntervalSince(tapped)))
-        for second in 201...270 {
+        #expect((26...34).contains(schedule.nextDueAt.timeIntervalSince(tapped)))
+        for second in 201...226 {
             let result = schedule.tick(now: now.addingTimeInterval(Double(second)))
             #expect(result == nil)
         }
         var emitted = 0
-        for second in 271...331 {
+        for second in 227...235 {
             if schedule.tick(now: now.addingTimeInterval(Double(second))) != nil { emitted += 1 }
         }
         #expect(emitted == 1)
@@ -84,7 +84,7 @@ struct BuddyCompanionTests {
         let waking = schedule.tick(now: wake)
         #expect(waking == nil)
         #expect(schedule.activeDuration == 10)
-        #expect((35...60).contains(schedule.nextDueAt.timeIntervalSince(wake)))
+        #expect((26...34).contains(schedule.nextDueAt.timeIntervalSince(wake)))
         let backwards = schedule.tick(now: now)
         #expect(backwards == nil)
         #expect(schedule.activeDuration == 10)
@@ -123,6 +123,28 @@ struct BuddyCompanionTests {
         for second in 6_751...8_000 {
             let moment = schedule.tick(now: now.addingTimeInterval(Double(second)))
             #expect(moment?.kind != .care)
+        }
+    }
+
+    @Test func eachCharacterAutonomouslyUsesItsOwnSignatureWithoutAQuotaMeal() throws {
+        for character in QuotaCharacter.builtInCharacters {
+            var schedule = BuddyCompanionSchedule(now: now, seed: 42)
+            var signatureCaptions = Set<String>()
+            var count = 0
+            for second in 1...1_200 {
+                if let moment = schedule.tick(now: now.addingTimeInterval(Double(second)), character: character) {
+                    count += 1
+                    #expect(character.companionActions.contains(moment.action))
+                    #expect(moment.action != .eating)
+                    if moment.action == character.signatureAction {
+                        signatureCaptions.insert(moment.caption)
+                    }
+                }
+            }
+            #expect((35...46).contains(count))
+            try #require(!signatureCaptions.isEmpty)
+            let ownPhrases = Set((0..<3).map { character.signatureCaption(variant: $0) })
+            #expect(signatureCaptions.isSubset(of: ownPhrases))
         }
     }
 }

@@ -59,7 +59,8 @@ public struct BuddyCompanionSchedule: Equatable, Sendable {
         nextDueAt = now.addingTimeInterval(delay(first: false))
     }
 
-    public mutating func tick(now: Date, context: BuddyCompanionContext = .init()) -> BuddyCompanionMoment? {
+    public mutating func tick(now: Date, context: BuddyCompanionContext = .init(),
+                              character: QuotaCharacter = .dragonGirl) -> BuddyCompanionMoment? {
         guard Self.isFinite(now) else { return nil }
         let elapsed = now.timeIntervalSince(lastTickAt)
         lastTickAt = now
@@ -91,20 +92,23 @@ public struct BuddyCompanionSchedule: Equatable, Sendable {
                            caption: action == .sip ? "陪你一阵子啦，喝口水吧" : "伸伸懒腰，也看看远处吧",
                            kind: .care)
         } else {
-            let choices: [BuddyAction] = [.stretch, .nuzzle, .peek, .sip, .wave, .nap, .celebrate]
-                .filter { $0 != lastAction }
+            let choices = character.companionActions.filter { $0 != lastAction }
             let index = min(choices.count - 1, Int(unitRandom() * Double(choices.count)))
             let action = choices[index]
             let phrases = Self.phrases(for: action)
             let phraseIndex = sequence % phrases.count
-            moment = .init(action: action, caption: phrases[phraseIndex])
+            let caption = action == character.signatureAction || action == .celebrate
+                ? character.signatureCaption(variant: sequence) : phrases[phraseIndex]
+            moment = .init(action: action, caption: caption)
         }
         lastAction = moment.action
         return moment
     }
 
     private mutating func delay(first: Bool) -> TimeInterval {
-        first ? 35 + unitRandom() * 25 : 70 + unitRandom() * 60
+        // A small jitter keeps the companion natural without making the setting
+        // feel unreliable: every ordinary quiet interval is about thirty seconds.
+        26 + unitRandom() * 8
     }
 
     private mutating func unitRandom() -> Double {

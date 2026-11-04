@@ -2,11 +2,15 @@ import AppKit
 import SwiftUI
 import Combine
 import CoreGraphics
+import QuartzCore
 import QuotaCore
 
 final class QuotaFloatingPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+    override func animationResizeTime(_ newFrame: NSRect) -> TimeInterval {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.36
+    }
 
     override func performDrag(with event: NSEvent) {
         guard isMovable && isMovableByWindowBackground else { return }
@@ -33,6 +37,7 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
     private var lastStatusSignature: String?
     private let frameName = NSWindow.FrameAutosaveName("YuliangDesktopCardV1")
     private var persistsPreferences = true
+    private var pluginBridge: StandalonePluginBridge?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         configure(model: StandaloneModel(), startCollector: true, showOnLaunch: true)
@@ -51,12 +56,13 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
             if let raw = defaults.string(forKey: "card.appearance"), let appearance = StandaloneAppearance(rawValue: raw) { model.appearance = appearance }
             if let raw = defaults.string(forKey: "card.widgetColor"), let style = StandaloneWidgetColorStyle(rawValue: raw) { model.widgetColorStyle = style }
             if let raw = defaults.string(forKey: "card.displayStyle"), let style = StandaloneDisplayStyle(rawValue: raw) { model.displayStyle = style }
+            if let raw = defaults.string(forKey: "display.language"), let language = YuliangLanguage(rawValue: raw) { model.language = language }
         }
         panel = QuotaFloatingPanel(contentRect: NSRect(x: 0, y: 0,
                                                      width: StandaloneLayout.desktopWidth(style: model.displayStyle, compact: model.compact),
                                                      height: 180),
                                   styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        panel.title = "余量 · 桌面卡片"
+        panel.title = YuliangL10n.text("余量 · 桌面卡片")
         panel.appearance = model.appearance.nativeAppearance
         panel.backgroundColor = .clear
         panel.isOpaque = false
@@ -115,6 +121,7 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
         }
         model.onDesktopVisibility = { [weak self] visible in self?.setDesktopVisible(visible) }
         model.onShowDesktop = { [weak self] in self?.showDesktop(reposition: true) }
+        model.onPluginShowDesktop = { [weak self] in self?.showDesktop(reposition: false) }
         model.onDisplayChange = { [weak self] in
             guard let self else { return }
             self.savePreference(self.model.showDailyTokens, key: "display.dailyTokens")
@@ -137,6 +144,18 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
                 UserDefaults.standard.set(self.model.displayStyle.rawValue, forKey: "card.displayStyle")
             }
             self.updateStatusItem()
+            self.scheduleResize()
+        }
+        model.onLanguageChange = { [weak self] language in
+            guard let self else { return }
+            self.transitionSurfaces()
+            if self.persistsPreferences { UserDefaults.standard.set(language.rawValue, forKey: "display.language") }
+            self.panel?.title = YuliangL10n.text("余量 · 桌面卡片")
+            self.browser?.title = YuliangL10n.text("余量 · 用量与额度")
+            self.claudeBrowser?.title = YuliangL10n.text("余量 · 连接 Claude")
+            self.lastStatusSignature = nil
+            self.updateStatusItem()
+            self.createMenu()
             self.scheduleResize()
         }
         applyAppearance(model.appearance)
@@ -175,6 +194,13 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
         if showOnLaunch { showDesktop(reposition: false) }
         else { model.desktopVisible = false }
         if startCollector { model.collector.start() }
+        #if !QUOTA_SHELL_TESTING
+        // The bridge reuses this exact model and its existing 60-second collectors.
+        // A failure to create its private local queue never blocks the widget.
+        let bridge = StandalonePluginBridge(model: model)
+        do { try bridge.start(); pluginBridge = bridge }
+        catch { bridge.stop() }
+        #endif
         scheduleResize()
     }
 
@@ -191,16 +217,16 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
     private func updateStatusItem(document: QuotaStoreDocument? = nil, now: Date? = nil) {
         guard let statusItem else { return }
         let value = QuotaPresentation(document: document ?? model.document, now: now ?? model.now)
-        let percent = value.remainingPercent.map { "\(Int($0.rounded()))%" } ?? "未知"
+        let percent = value.remainingPercent.map { "\(Int($0.rounded()))%" } ?? YuliangL10n.text("未知")
         let reading: String
         switch value.freshness {
-        case .fresh: reading = value.remainingPercent == nil ? "额度未提供" : "剩余 \(percent)"
-        case .missing: reading = "等待读取额度"
-        case .stale: reading = "上次剩余 \(percent) · 记录已陈旧"
-        case .resetDue: reading = "上次剩余 \(percent) · 重置待核对"
+        case .fresh: reading = value.remainingPercent == nil ? YuliangL10n.text("额度未提供") : YuliangL10n.format("剩余 {0}", percent)
+        case .missing: reading = YuliangL10n.text("等待读取额度")
+        case .stale: reading = YuliangL10n.format("上次剩余 {0} · 记录已陈旧", percent)
+        case .resetDue: reading = YuliangL10n.format("上次剩余 {0} · 重置待核对", percent)
         }
-        let updated = value.observedAt.map { $0.formatted(date: .abbreviated, time: .standard) } ?? "尚未读取"
-        let tooltip = "余量 · \(value.provider.name)\n\(value.window?.label ?? "订阅额度") · \(reading)\n额度更新 \(updated)\n点击查看用量与操作"
+        let updated = value.observedAt.map { StandaloneDateFormat.string($0, dateStyle: .abbreviated, timeStyle: .standard) } ?? YuliangL10n.text("尚未读取")
+        let tooltip = YuliangL10n.text("余量 · ") + value.provider.name + "\n" + YuliangL10n.text(value.window?.label ?? YuliangL10n.text("订阅额度")) + " · " + reading + "\n" + YuliangL10n.text("额度更新 ") + updated + "\n" + YuliangL10n.text("点击查看用量与操作")
         let signature = "\(model.displayStyle.rawValue)/\(tooltip)"
         guard signature != lastStatusSignature else { return }
         // A fixed/variable-length transition may cause AppKit to refresh the
@@ -209,7 +235,7 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
         if statusItem.length != length { statusItem.length = length }
         guard let button = statusItem.button else { return }
         button.toolTip = tooltip
-        button.setAccessibilityLabel("余量，\(value.provider.name)，\(reading)，点击查看用量与操作")
+        button.setAccessibilityLabel(YuliangL10n.text("余量 · ") + value.provider.name + " · " + reading + " · " + YuliangL10n.text("点击查看用量与操作"))
         if model.displayStyle == .duo {
             button.imagePosition = .imageOnly
             button.title = ""
@@ -218,7 +244,7 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
         } else {
             button.imagePosition = .noImage
             button.image = nil
-            button.title = value.remainingPercent.map { "余 \(Int($0.rounded()))%" } ?? "余量"
+            button.title = value.remainingPercent.map { YuliangL10n.format("余 {0}%", String(Int($0.rounded()))) } ?? YuliangL10n.text("余量")
         }
         lastStatusSignature = signature
         #if QUOTA_SHELL_TESTING
@@ -260,11 +286,12 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
             return true
         }
         image.isTemplate = true
-        image.accessibilityDescription = "订阅剩余额度"
+        image.accessibilityDescription = YuliangL10n.text("订阅剩余额度")
         return image
     }
 
     private func applyAppearance(_ appearance: StandaloneAppearance) {
+        transitionSurfaces()
         NSApp.appearance = appearance.nativeAppearance
         panel?.appearance = appearance.nativeAppearance
         popover?.appearance = appearance.nativeAppearance
@@ -272,6 +299,19 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
         browser?.appearance = appearance.nativeAppearance
         claudeBrowser?.appearance = appearance.nativeAppearance
         scheduleResize()
+    }
+
+    private func transitionSurfaces() {
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+        for window in [panel, browser, claudeBrowser, popover?.contentViewController?.view.window, characterPopover?.contentViewController?.view.window].compactMap({ $0 }) {
+            guard window.isVisible, let view = window.contentView else { continue }
+            view.wantsLayer = true
+            let fade = CATransition()
+            fade.type = .fade
+            fade.duration = 0.22
+            fade.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            view.layer?.add(fade, forKey: "widget.appearance")
+        }
     }
 
     private func applyPin(_ pinned: Bool) {
@@ -306,20 +346,29 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
             desktopHost.layoutSubtreeIfNeeded()
             let old = panel.frame
             let size = NSSize(width: StandaloneLayout.desktopWidth(style: model.displayStyle, compact: model.compact),
-                              height: StandaloneLayout.height)
+                              height: StandaloneLayout.desktopHeight(style: model.displayStyle, compact: model.compact))
             if abs(old.height - size.height) > 0.5 || old.width != size.width {
-                panel.setContentSize(size)
-                panel.setFrameOrigin(NSPoint(x: old.minX, y: old.maxY - size.height))
+                var target = NSRect(x: old.minX, y: old.maxY - size.height, width: size.width, height: size.height)
+                if let visible = NSScreen.screens.max(by: { intersectionArea($0.visibleFrame, old) < intersectionArea($1.visibleFrame, old) })?.visibleFrame {
+                    target.origin.x = min(max(target.minX, visible.minX), max(visible.minX, visible.maxX - size.width))
+                    target.origin.y = min(max(target.minY, visible.minY), max(visible.minY, visible.maxY - size.height))
+                }
+                #if QUOTA_SHELL_TESTING
+                let animate = false
+                #else
+                let animate = panel.isVisible && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+                #endif
+                panel.setFrame(target, display: true, animate: animate)
                 if persistsPreferences, panel.frameAutosaveName != NSWindow.FrameAutosaveName("") {
                     panel.saveFrame(usingName: panel.frameAutosaveName)
                 }
             }
-            keepCardOnScreen()
+            else { keepCardOnScreen() }
         }
         if let popoverHost, let popover {
             popoverHost.view.layoutSubtreeIfNeeded()
             popover.contentSize = NSSize(width: StandaloneLayout.cardWidth(compact: model.compact),
-                                        height: StandaloneLayout.height)
+                                        height: StandaloneLayout.cardHeight(compact: model.compact))
         }
     }
 
@@ -370,6 +419,8 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
         return true
     }
     func applicationWillTerminate(_ notification: Notification) {
+        pluginBridge?.stop()
+        pluginBridge = nil
         StandaloneSettingsPresenter.close()
         model?.collector.pause()
         model?.claudeCollector.pause()
@@ -423,7 +474,7 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
         if browser == nil {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 430, height: 566),
                                   styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
-            window.title = "余量 · 用量与额度"
+            window.title = YuliangL10n.text("余量 · 用量与额度")
             window.appearance = model.appearance.nativeAppearance
             window.contentView = NSHostingView(rootView: StandaloneConnectionRootView(model: model))
             window.isReleasedWhenClosed = false
@@ -439,7 +490,7 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
         if claudeBrowser == nil {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 820, height: 700),
                                   styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-            window.title = "余量 · 连接 Claude"
+            window.title = YuliangL10n.text("余量 · 连接 Claude")
             window.appearance = model.appearance.nativeAppearance
             window.contentView = NSHostingView(rootView: ClaudeConnectionView(collector: model.claudeCollector))
             window.minSize = NSSize(width: 740, height: 620)
@@ -455,16 +506,16 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
         let menu = NSMenu()
         let app = NSMenuItem()
         let appMenu = NSMenu()
-        appMenu.addItem(withTitle: "找回桌面卡片", action: #selector(showPanel), keyEquivalent: "0").target = self
-        appMenu.addItem(withTitle: "用量与额度详情", action: #selector(connectAction), keyEquivalent: "l").target = self
-        appMenu.addItem(withTitle: "立即刷新", action: #selector(refreshAction), keyEquivalent: "r").target = self
+        appMenu.addItem(withTitle: YuliangL10n.text("找回桌面卡片"), action: #selector(showPanel), keyEquivalent: "0").target = self
+        appMenu.addItem(withTitle: YuliangL10n.text("用量与额度详情"), action: #selector(connectAction), keyEquivalent: "l").target = self
+        appMenu.addItem(withTitle: YuliangL10n.text("立即刷新"), action: #selector(refreshAction), keyEquivalent: "r").target = self
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "退出余量", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.addItem(withTitle: YuliangL10n.text("退出余量"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         app.submenu = appMenu
         menu.addItem(app)
-        let edit = NSMenuItem(title: "编辑", action: nil, keyEquivalent: "")
-        let editMenu = NSMenu(title: "编辑")
-        for (title, action, key) in [("撤销", "undo:", "z"), ("剪切", "cut:", "x"), ("复制", "copy:", "c"), ("粘贴", "paste:", "v"), ("全选", "selectAll:", "a")] {
+        let edit = NSMenuItem(title: YuliangL10n.text("编辑"), action: nil, keyEquivalent: "")
+        let editMenu = NSMenu(title: YuliangL10n.text("编辑"))
+        for (title, action, key) in [(YuliangL10n.text("撤销"), "undo:", "z"), (YuliangL10n.text("剪切"), "cut:", "x"), (YuliangL10n.text("复制"), "copy:", "c"), (YuliangL10n.text("粘贴"), "paste:", "v"), (YuliangL10n.text("全选"), "selectAll:", "a")] {
             editMenu.addItem(withTitle: title, action: Selector(action), keyEquivalent: key)
         }
         edit.submenu = editMenu
@@ -506,7 +557,7 @@ private struct CharacterPickerChrome: View {
     var body: some View {
         StandaloneCharacterPicker(model: model, onSelect: onSelect)
             .preferredColorScheme(model.appearance.colorScheme)
-            .background(QuotaPalette.surface)
+            .background(StandalonePalette.surface)
     }
 }
 
@@ -515,7 +566,7 @@ private struct DesktopCardChrome: View {
     var body: some View {
         StandalonePanelView(model: model, surface: .desktop)
             .preferredColorScheme(model.appearance.colorScheme)
-            .clipShape(RoundedRectangle(cornerRadius: StandaloneLayout.cornerRadius,
+            .clipShape(RoundedRectangle(cornerRadius: StandaloneLayout.cornerRadius(style: model.displayStyle, compact: model.compact),
                                         style: .continuous))
 
     }

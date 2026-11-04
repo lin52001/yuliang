@@ -125,6 +125,151 @@ public struct BuddyMotionSample: Equatable, Sendable {
     }
 }
 
+/// A character's visual vocabulary. Rendering stays in the shared SwiftUI view;
+/// the core only describes a bounded gesture and its small local effect.
+public enum BuddySignatureEffect: String, CaseIterable, Sendable {
+    case dragonSpark, amberOrbit, tideBubble, starlight, cloudDrift, puddingBounce, swordArc, softGlow
+}
+
+public extension QuotaCharacter {
+    var signatureEffect: BuddySignatureEffect {
+        switch self {
+        case .dragonGirl: .dragonSpark
+        case .claudeGirl: .amberOrbit
+        case .deepseekGirl: .tideBubble
+        case .geminiGirl: .starlight
+        case .cloudSprite: .cloudDrift
+        case .nailong: .puddingBounce
+        case .swordCat: .swordArc
+        default: .softGlow
+        }
+    }
+
+    var signatureAction: BuddyAction {
+        switch self {
+        case .dragonGirl: .spin
+        case .claudeGirl: .wave
+        case .deepseekGirl: .jump
+        case .geminiGirl: .peek
+        case .cloudSprite: .stretch
+        case .nailong: .dance
+        case .swordCat: .celebrate
+        default: .nuzzle
+        }
+    }
+
+    var signatureLabel: String {
+        switch self {
+        case .dragonGirl: "龙息星糖"
+        case .claudeGirl: "暖光应援"
+        case .deepseekGirl: "泡泡跃浪"
+        case .geminiGirl: "星轨巡游"
+        case .cloudSprite: "云朵轻飘"
+        case .nailong: "弹弹肚皮"
+        case .swordCat: "护你一剑"
+        default: "暖心贴贴"
+        }
+    }
+
+    var signatureSymbol: String {
+        switch self {
+        case .dragonGirl: "flame.fill"
+        case .claudeGirl: "sun.max.fill"
+        case .deepseekGirl: "drop.fill"
+        case .geminiGirl: "star.fill"
+        case .cloudSprite: "cloud.fill"
+        case .nailong: "circle.inset.filled"
+        case .swordCat: "shield.lefthalf.filled"
+        default: "heart.fill"
+        }
+    }
+
+    /// The signature appears in the quiet-time vocabulary without making every
+    /// action identical. No autonomous vocabulary contains a synthetic meal.
+    var companionActions: [BuddyAction] {
+        var result: [BuddyAction] = []
+        for action in [signatureAction, .stretch, .nuzzle, .peek, .sip, .wave, .nap, .celebrate] {
+            if !result.contains(action) { result.append(action) }
+        }
+        return result
+    }
+
+    func signatureCaption(variant: Int = 0) -> String {
+        let phrases: [String]
+        switch self {
+        case .dragonGirl: phrases = ["龙尾画个圈，送你一点勇气", "小小龙息，暖暖陪着你", "星糖闪一下，今天也加油"]
+        case .claudeGirl: phrases = ["暖光绕一圈，为你轻轻鼓掌", "把这束暖光，留给认真开工的你", "挥挥手，今天也有我应援"]
+        case .deepseekGirl: phrases = ["跃过小浪花，我们慢慢前进", "吹个泡泡，把紧张放轻一点", "蓝鲸陪着你，深呼吸一下"]
+        case .geminiGirl: phrases = ["星轨转一圈，灵感来敲门", "耳朵动一下，听见你的努力啦", "送你一颗星，照亮眼前一小步"]
+        case .cloudSprite: phrases = ["轻轻飘一下，肩膀也放松吧", "把烦恼放进云朵里歇一会儿", "云朵软软的，借你靠一下"]
+        case .nailong: phrases = ["肚皮弹一弹，烦恼抖掉一点点", "奶龙陪你，慢慢来也很棒", "吨吨一下，给今天补点元气"]
+        case .swordCat: phrases = ["小剑出鞘，替你挡住一点烦恼", "收剑站好，陪你稳稳往前走", "这一剑，斩掉一点点坏心情"]
+        default: phrases = ["轻轻靠近，陪你慢慢来", "你忙你的，我会乖乖陪着", "送你一点小小的元气"]
+        }
+        let index = ((variant % phrases.count) + phrases.count) % phrases.count
+        return phrases[index]
+    }
+
+    /// Character-specific gestures are sampled locally, then applied around the
+    /// quota-derived anchor. They must never move the actual progress boundary.
+    func motionSample(action: BuddyAction, progress: Double, reduceMotion: Bool = false) -> BuddyMotionSample {
+        let base = action.motionSample(progress: progress, reduceMotion: reduceMotion)
+        guard progress.isFinite, progress > 0, progress < 1, !reduceMotion else { return .rest }
+        let envelope = pow(sin(progress * .pi), 2)
+        let sway = sin(progress * .pi * 4)
+        if action == .eating {
+            switch self {
+            case .nailong:
+                return .init(verticalOffset: base.verticalOffset,
+                             scaleX: 1 + 0.065 * abs(sway) * envelope,
+                             scaleY: 1 - 0.035 * abs(sway) * envelope)
+            case .swordCat:
+                return .init(rotationDegrees: -3 * envelope, verticalOffset: base.verticalOffset)
+            case .deepseekGirl:
+                return .init(rotationDegrees: sway * 2 * envelope, verticalOffset: base.verticalOffset)
+            default: return base
+            }
+        }
+        guard action == signatureAction || action == .celebrate else { return base }
+        switch signatureEffect {
+        case .dragonSpark:
+            return .init(rotationDegrees: sway * 13 * envelope,
+                         horizontalOffset: sin(progress * .pi * 2) * 0.065 * envelope,
+                         verticalOffset: -0.055 * envelope)
+        case .amberOrbit:
+            return .init(rotationDegrees: sin(progress * .pi * 6) * 5 * envelope,
+                         verticalOffset: -0.015 * envelope,
+                         scaleX: 1 + 0.028 * envelope, scaleY: 1 + 0.028 * envelope)
+        case .tideBubble:
+            return .init(rotationDegrees: sin(progress * .pi * 2) * 8 * envelope,
+                         horizontalOffset: sin(progress * .pi * 2) * 0.055 * envelope,
+                         verticalOffset: -0.17 * pow(sin(progress * .pi), 2))
+        case .starlight:
+            return .init(rotationDegrees: sway * 6 * envelope,
+                         horizontalOffset: sin(progress * .pi * 2) * 0.075 * envelope,
+                         verticalOffset: -0.026 * envelope,
+                         scaleX: 1 + 0.045 * envelope, scaleY: 1 + 0.045 * envelope)
+        case .cloudDrift:
+            return .init(rotationDegrees: sin(progress * .pi * 2) * 3 * envelope,
+                         horizontalOffset: sin(progress * .pi * 2) * 0.035 * envelope,
+                         verticalOffset: -0.105 * envelope,
+                         scaleX: 1 - 0.02 * envelope, scaleY: 1 + 0.035 * envelope)
+        case .puddingBounce:
+            let bounce = abs(sin(progress * .pi * 3)) * envelope
+            return .init(rotationDegrees: sway * 4 * envelope,
+                         verticalOffset: -0.085 * bounce,
+                         scaleX: 1 + 0.115 * bounce, scaleY: 1 - 0.085 * bounce)
+        case .swordArc:
+            let slash = sin(progress * .pi * 2) * envelope
+            return .init(rotationDegrees: slash * 19,
+                         horizontalOffset: slash * 0.095,
+                         verticalOffset: -0.055 * envelope,
+                         scaleX: 1 + 0.025 * envelope, scaleY: 1 - 0.015 * envelope)
+        case .softGlow: return base
+        }
+    }
+}
+
 /// Compares already validated, selected provider observations. The caller must invoke this
 /// only when ingesting a real collector snapshot, never for a preview or a preference change.
 public enum BuddyQuotaChange {

@@ -1,30 +1,38 @@
 # Yuliang · 余量
 
-A compact macOS companion for AI quota and usage. Version 0.16.0 (build 21) lets you select Codex or Claude subscription quota in a fixed 344 × 160pt desktop card or a 160 × 160pt Duo ring. Codex daily and lifetime Token statistics can be shown independently; missing Claude Token statistics are not inferred. The character and quota share one state with the 344 × 160pt menu-bar popover. Appearance can follow the system or stay light or dark.
+A compact macOS companion for AI quota and usage. Version 0.17.0 (build 23) offers a 344 × 160pt standard card, a genuinely smaller 280 × 112pt compact card, and a 160 × 160pt Duo ring. Select Codex or Claude subscription quota. Daily and lifetime Codex Token statistics have independent display switches; missing Claude statistics are not inferred. The menu-bar card follows the compact setting and shares quota and interaction state with the desktop. Interface language can follow the system or use Simplified Chinese, English, or Japanese; light and dark appearance remain independently selectable.
 
-Choose one of four anime-style themes—Star Sugar Dragon Girl, Orange Glow, Blue Whale, or Star Kitty—or five original companions: Mochi Cat, Butter Bunny, Mint Fox, Sesame Bear, and Cloud Sprite. Star Sugar is the default. When a newer, verified quota observation shows consumption, your buddy eats a biscuit and follows the progress bar. Twelve interactions include patting, waving, napping, cheering, feeding, jumping, swaying, spinning, stretching, nuzzling, peeking, and sharing a drink. Play never changes quota or Token statistics.
+Seven character behaviors are supported: Star Sugar Dragon Girl, Orange Glow, Blue Whale, Star Kitty, Cloud Sprite, Nailong, and Sword Cat. The public package includes artwork for the first five; the two new reference-character atlases remain local-only and use placeholder symbols when their local artwork is absent. Star Sugar is the default. A newer verified quota decrease triggers one biscuit. Twelve common interactions remain available alongside a signature action, local messages, and visual responses for each character. Mochi Cat, Butter Bunny, Mint Fox, and Sesame Bear no longer appear in the picker; old preferences can still migrate. Play never changes quota or Token statistics.
 
-The compact star rail adds a theme gradient, inner highlight, fine marks, and endpoint sparkle. Hover for a small response; tap the rail to trigger a short character reaction and star particles. It displays real quota and provides an interaction target; tapping never adjusts the quota. Optional autonomous companionship occasionally plays an action with a local caring message. Turn it off under **设置 → 显示内容 → 自主陪伴**.
+Compact mode reduces the actual window, type, rail, and Token rows together. Theme-aware progress details, hover responses, and taps accompany the character at the real quota endpoint; tapping never adjusts quota. Optional autonomous companionship reacts after a quiet interval of about 30 seconds (26–34 seconds), with character-specific local messages. Disable it under **Settings → Display → Autonomous companionship**. Quota collection still targets one read every 60 seconds.
 
-An encouragement appears while idle. An accepted newer quota observation briefly shows its update time for about 2.4 seconds; interaction-specific encouragement stays for about 5.5 seconds. Errors and actionable read states take priority. Desktop cards use 22pt continuous corners, a native `NSVisualEffectView` surface that blends behind the window, and semantic text colors. Light/dark appearance is separate from automatic/full-color/monochrome rendering. Desktop header controls for locking, hiding, and settings are removed; right-click the card for a persistent settings panel. This remains a standalone native desktop window, not a WidgetKit system widget, and does not promise pixel-identical system widget colors or tinting.
+An encouragement appears while idle. A newer accepted quota briefly shows its update time for about 2.4 seconds; interaction messages last about 5.5 seconds. Errors and actionable states take priority. Standard and Duo cards use 22pt continuous corners; compact uses 20pt. Light cards add a 94% white layer over the native material so dark wallpaper does not make them gray; menu cards, settings, and the character picker use white light surfaces. Dark mode retains native material and semantic colors. Mode resizing takes about 0.36 seconds, with short transitions for appearance, characters, language, display options, and settings pages. Reduce Motion removes these movements. Right-click opens a settings panel that stays open for consecutive changes. This is a standalone native window, not a WidgetKit system widget.
 
-[中文](README.md) · [Downloads](https://github.com/lin52001/yuliang/releases) · [What's new](CHANGELOG.md) · [Interaction references](PROGRESS-INTERACTION-REFERENCES.md) · [System appearance research](apple/MACOS-WIDGET-APPEARANCE.md)
+[中文](README.md) · [Downloads](https://github.com/lin52001/yuliang/releases) · [What's new](CHANGELOG.md) · [Interaction references](PROGRESS-INTERACTION-REFERENCES.md) · [System appearance research](apple/MACOS-WIDGET-APPEARANCE.md) · [Codex plugin](docs/YULIANG-PLUGIN.md)
 
-**Separate licenses:** code and five original vector companions are MIT. The four anime themes require attribution and noncommercial use; Blue Whale follows CC BY-NC-SA 4.0 with attribution to both ZipZipPipe and 上善. The code license does not cover these character images. See [ASSETS.md](ASSETS.md).
+**Separate licenses:** code is MIT. Character artwork, character designs, and official product marks retain their source-specific conditions; the code license does not cover third-party images or marks. See [ASSETS.md](ASSETS.md).
 
-## Synthetic previews
+## Codex local plugin beta
 
-These v0.16.0 native-interface previews use synthetic quota and Token statistics, not real account records. They show layout, the star rail, companions and context settings. Native window-cache images do not fully capture on-screen material or color compositing; they are not proof of pixel-identical system appearance or real Claude quota collection. Artwork attribution and use conditions remain in [ASSETS.md](ASSETS.md).
+[Download plugin ZIP](downloads/Yuliang-Plugin-v0.1.0-beta.1.zip) · [SHA256](downloads/Yuliang-Plugin-v0.1.0-beta.1.sha256)
+
+Plugin `0.1.0-beta.1` exposes quota and Token queries, refresh requests, the native card, character interactions and selection, and layout, appearance, and language settings. It requires Yuliang `0.17.0` build `23` or later, Node.js 20+, and a plugin-capable Codex client. It shares the existing approximately 60-second collector and bundles neither the App nor character artwork. Characters still appear in Yuliang’s native window. See the [plugin guide](docs/YULIANG-PLUGIN.md) for installation, examples, and data scope.
+
+## Synthetic previews (v0.17.0)
+
+These native v0.17.0 acceptance previews use synthetic quota and Token data, not real account records. Standard, compact, Duo, and persistent settings come from the same tested version, including the new snowy light surface. Native cache images do not fully capture screen material or monochrome compositing and do not prove real Claude quota collection. Artwork attribution and conditions remain in [ASSETS.md](ASSETS.md).
 
 | Light | Dark |
 | --- | --- |
 | ![Synthetic preview of the light desktop card](docs/assets/widget.png) | ![Synthetic preview of the dark desktop card](docs/assets/widget-dark.png) |
 
+| Compact light · 280 × 112pt | Compact dark · 280 × 112pt |
+| --- | --- |
+| ![Synthetic compact light card](docs/assets/compact.png) | ![Synthetic compact dark card](docs/assets/compact-dark.png) |
+
 | Duo light | Duo dark |
 | --- | --- |
 | ![Synthetic light Duo ring preview](docs/assets/duo.png) | ![Synthetic dark Duo ring preview](docs/assets/duo-dark.png) |
-
-![Synthetic preview of the dark character picker](docs/assets/characters.png)
 
 The separate settings panel stays open for consecutive changes. Close it when finished.
 
@@ -36,7 +44,7 @@ The separate settings panel stays open for consecutive changes. Close it when fi
 
 Requires macOS 14 or later. The Codex source needs an installed, signed-in official Codex CLI. The Claude source needs official sign-in inside Yuliang's connection window. No Apple Developer account is required. Enter Claude passwords and verification codes only on the official site; Yuliang does not ask you to paste cookies or API keys.
 
-1. Open [Releases](https://github.com/lin52001/yuliang/releases). Download `Yuliang-v0.16.0-macOS-arm64.zip` for Apple Silicon or `Yuliang-v0.16.0-macOS-x86_64.zip` for Intel, if that asset is available. Check **Apple menu → About This Mac** if unsure.
+1. Open [Releases](https://github.com/lin52001/yuliang/releases). Download `Yuliang-v0.17.0-macOS-arm64.zip` for Apple Silicon or `Yuliang-v0.17.0-macOS-x86_64.zip` for Intel, if that asset is available. Check **Apple menu → About This Mac** if unsure.
 2. Extract the archive and move `余量.app` to `~/Applications` or `/Applications`.
 3. Open the app. The default Codex source starts reading automatically. Claude requires connecting and enabling collection as described below. The app has no Dock icon.
 
@@ -72,13 +80,14 @@ The build produces `releases/余量.app` for the current machine's architecture 
 - The desktop card is freely movable by default: drag its header or non-interactive areas. Buttons and the character retain their click actions. Choose **锁定位置** in settings to fix or release its position. Position and lock preference are saved locally.
 - Set always-on-top or desktop-level placement separately in the settings menu. Always-on-top and position locking are independent.
 - Choose **收起桌面卡片** in settings to hide only the desktop widget. Background collection continues; show it again or explicitly move it back to the current screen from the popover. This menu action can reposition a locked card.
-- Use the character button to choose the four anime-style themes or five original companions. Your choice is saved locally.
-- Open settings, then choose the 344 × 160pt **轻巧卡片** or 160 × 160pt **Duo 圆环** under **小组件样式**. The menu-bar popover is 344 × 160pt. Both desktop styles use 22pt continuous corners, native window material, and semantic colors. The independently sized settings panel stays open for repeated changes; use Back or Close when finished. The compact card uses a fine star rail with a gradient, highlights and ticks; Duo uses a marked ring. Hover or tap the rail for a character response. Fill, percentage, and moving character use the same real quota value, unaffected by tapping. Switching preserves the top edge and keeps the window on screen. The compact setting changes internal spacing, not the outer frame size.
+- Choose available characters through the standard card’s character button or **Settings → Choose a companion**. Nailong and Sword Cat retain their actions and placeholder symbols in the public build, without their reference atlas. Compact mode uses the context settings. The selection is stored locally and shared with the menu-bar card.
+- Under **Settings → Widget style**, use the standard card (344 × 160pt), compact card (280 × 112pt), or Duo ring (160 × 160pt). Compact changes the actual card and menu-bar window dimensions, reduces Token rows, and hides bottom shortcuts; it does not resize Duo. Standard and Duo corners are 22pt; compact corners are 20pt. Resizing and crossfades preserve the upper-left anchor and keep the card on screen. Settings stay open. Progress fill, percentage, and character position share one real quota value.
 - Duo uses a 20-point monochrome menu-bar ring. Click it to open the complete card; hide the desktop widget to use the menu-bar entry alone.
 - Codex daily and lifetime Token usage are both shown by default. Toggle **日 Token 用量** and **累计 Token 用量** independently under **显示内容** in settings. The card uses one row; Duo uses two narrow rows whose content collapses independently without resizing the outer frame. Hover or open details for the server's daily date and full numbers. These switches control display only. Claude does not borrow Codex statistics or infer Token counts from quota.
+- Choose **Settings → Language** for System, 简体中文, English, or 日本語. Text, dates, and numbers update immediately while settings stay open. This local preference does not rewrite quota records or change the official website’s language.
 - Under **外观**, choose system/light/dark appearance independently from **自动 · 后台淡为单色**, **始终全彩**, or **始终单色**. Automatic uses the frontmost application as an approximation: Finder or Yuliang in front means full color; other apps in front mean monochrome. A Finder file window also counts as full color. The desktop surface uses `underWindowBackground` with `behindWindow` blending. It cannot automatically read the system's exact Clear/Tinted selection; app color options do not synchronize bidirectionally with system widget settings or promise pixel-identical output. Preferences are saved locally.
-- Click the character for a random reaction. Right-click, open the bottom sparkle menu, or choose **互动** in settings for twelve actions: pat, wave, nap, cheer, feed, jump, sway, spin, stretch, nuzzle, peek, or share a drink. Choose a character through the character button or **选择小伙伴** in settings. Play does not change quota, Token statistics, timestamps, or quota-derived satiety.
-- Autonomous companionship occasionally plays a short action and a local caring message. Toggle **自主陪伴** under **设置 → 显示内容** to disable it. Manual actions and verified quota consumption take priority, followed by a short quiet period. Consumption arriving every minute does not keep restarting the full companionship delay. Hidden widgets, sleep, settings operations, and Reduce Motion suppress autonomous actions without queuing them for later. It reads no chats and makes no model requests.
+- Click the character for a response from its own action mix. Right-click, use the standard card’s bottom sparkle button, or choose **Settings → Interactions** for twelve common actions plus the current character’s signature: dragon sugar, warm glow, bubble leap, star orbit, floating cloud, belly bounce, or sword guard. Tapping the rail also triggers interaction. Play never changes quota, Token statistics, timestamps, or long-term satiety.
+- Autonomous companionship plays a short action after a quiet interval of about 30 seconds (26–34 seconds) and a local caring message. Toggle **自主陪伴** under **设置 → 显示内容** to disable it. Manual actions and verified quota consumption take priority, followed by a short quiet period. Consumption arriving every minute does not keep restarting the full companionship delay. Hidden widgets, sleep, settings operations, and Reduce Motion suppress autonomous actions without queuing them for later. It reads no chats and makes no model requests.
 - The footer normally shows encouragement. A successfully accepted newer quota observation shows its update time for about 2.4 seconds; hover or open details for the full time. Manual interactions show matching encouragement for about 5.5 seconds and take priority over the refresh flash. Expired refresh flashes are not replayed afterward. Failed reads, sign-in requirements, unknown or stale values, and resets awaiting confirmation take priority. Interactions, character changes, and display switches keep the outer frame fixed.
 - Choose **Settings → 立即刷新** to read immediately; the details window also offers refresh. Open **用量与额度详情** in settings for independent endpoint status and success times, quota windows, statistical scope, and pause/resume controls. Persistent hints and picker instructions are folded away.
 - Quit Yuliang from its menu to stop collection. Sleep pauses requests; waking resumes them.
@@ -126,13 +135,13 @@ Quota and character preferences are stored at:
 ~/Library/Application Support/YuliangStandalone/quota.json
 ```
 
-Codex Token statistics and their read status stay in process memory only and are fetched again after restarting; they are not written to the file above. Window placement, position lock, widget style, both Token display switches, autonomous companionship, appearance, and other display preferences are stored through macOS preferences. No real account records or credentials are included in the repository or release archives.
+Codex Token statistics and their read status are managed by the current process and fetched again after restarting; they are not written to the quota archive above. Plugin queries create short-lived, owner-only local response files and return the summary to the current Codex chat; completed calls clean up their response files. Window placement, position lock, widget style, both Token display switches, autonomous companionship, language, appearance, and other display preferences are stored through macOS preferences. No real account records or credentials are included in the repository or release archives.
 
 If Token statistics are unsupported or missing, values remain unknown and quota keeps its independent result. A failed Token read retains its previous in-memory value and original success time. A restart clears that in-memory value until the next successful read. The daily server date is not converted into your local calendar day.
 
 If Codex cannot be found, check its installation location. Common supported paths include `/opt/homebrew/bin/codex`, `/usr/local/bin/codex`, `~/.local/bin/codex`, `~/.npm-global/bin/codex`, and known official app bundles. Custom npm/nvm paths may not be detected. If login fails, run `codex login` and retry from the details window; do not copy authentication files.
 
-This release is a standalone Mac card and menu-bar app, not a WidgetKit system widget. iPhone support, cloud sync, and embedding inside the native Codex interface are not included.
+This release is a standalone Mac card and menu-bar app, not a WidgetKit system widget. iPhone support, cloud sync, and embedding inside the native Codex interface are not included. The Codex plugin supplies tools and a skill; characters remain in the native Yuliang card. See the [plugin guide](docs/YULIANG-PLUGIN.md).
 
 To uninstall, quit the app and remove `余量.app`. Optionally remove the `YuliangStandalone` data directory above; this permanently deletes your local records and character choice. It does not remove Codex login state.
 
@@ -153,7 +162,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and [CHANGEL
 
 ## License
 
-Code and five original vector companions use the [MIT License](LICENSE). The four anime themes retain attribution to ZipZipPipe and are limited to noncommercial use. Blue Whale also adapts 上善's whale design and follows CC BY-NC-SA 4.0, with attribution to both artists and ShareAlike for adaptations. Provenance and full artwork conditions are documented in [ASSETS.md](ASSETS.md); the code license does not replace artwork permissions. Old private-prototype third-party character atlases are not included; legacy IDs support preference migration and do not grant rights to distribute those characters.
+Code uses the [MIT License](LICENSE). Character designs, generated or adapted artwork, and product marks have separate conditions documented in [ASSETS.md](ASSETS.md). The code license does not grant rights to third-party characters or marks. Legacy private-prototype character atlases are not included; migration identifiers do not grant distribution rights.
 
 Yuliang is an independent community project, not an official OpenAI or character-brand product. Third-party marks belong to their respective owners; the MIT License does not grant rights to those marks or characters.
 

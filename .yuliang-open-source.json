@@ -1,0 +1,347 @@
+{
+  "schemaVersion": 1,
+  "project": "yuliang-native-public",
+  "repository": "lin52001/yuliang",
+  "files": [
+    {
+      "path": ".agents/plugins/marketplace.json",
+      "sha256": "091b3b15d432751d064dac95e9eb91f4d27b91eea6fadb7b0833b16b6aae74a1"
+    },
+    {
+      "path": ".github/workflows/mac.yml",
+      "sha256": "d89f95db90691f1cc412e4ecfb6520c71e97c9d0975bcd5c9099be7916b67a73"
+    },
+    {
+      "path": ".github/workflows/release.yml",
+      "sha256": "0cb99e75c743b4d6e4443458aa928b265399b67764bcb691c8c360a62c07b8bd"
+    },
+    {
+      "path": ".gitignore",
+      "sha256": "fa48f966035bd9a3a92f5b987232af37e99e5c48ab65a276e119ae70240d5918"
+    },
+    {
+      "path": "apple/MACOS-WIDGET-APPEARANCE.md",
+      "sha256": "cd3f15da2326d5b6bb5d4573181fbaa836738759aaa91d30dba5de0263c53728"
+    },
+    {
+      "path": "apple/MacStandalone/ClaudeConnectionView.swift",
+      "sha256": "f27269c319ea91078d4b835fa6312fe694091ab8aa58ee5edb2c8551db2556f5"
+    },
+    {
+      "path": "apple/MacStandalone/CodexQuotaCollector.swift",
+      "sha256": "9723ed6d00a865066723c1c921d0521b9e7644a120257c3f6fedcc42a4fdb6f5"
+    },
+    {
+      "path": "apple/MacStandalone/CodexTokenUsage.swift",
+      "sha256": "a9d3bc0218a76bc6bf6c4880bf2698db3b5f4258dfed8bef03cc4d4eaefdda54"
+    },
+    {
+      "path": "apple/MacStandalone/Fixtures/oauth-login.html",
+      "sha256": "46311c1f0d7d05df6a4901b0ecba112b183412cfb474f6f4c6d836d4281c3476"
+    },
+    {
+      "path": "apple/MacStandalone/Fixtures/usage.html",
+      "sha256": "ab6776095defe656cfa9fb484c311c2e3f66689d546dd8d3107531c4469ed616"
+    },
+    {
+      "path": "apple/MacStandalone/Info.plist",
+      "sha256": "be5c618ffb1ea9008b9b796bae82c1ff3d19947ca6b0434cde68abcc30d56d96"
+    },
+    {
+      "path": "apple/MacStandalone/QuotaWebCollector.swift",
+      "sha256": "7db9f372eda25f6840ec30e15792d745d6bcdcf5335c8ac02e07773e324f730c"
+    },
+    {
+      "path": "apple/MacStandalone/StandaloneDesktopShell.swift",
+      "sha256": "9f47499a0a943948cb7194690a9e08aaa4d34dc4c218fe961a623624c7f905df"
+    },
+    {
+      "path": "apple/MacStandalone/StandalonePluginBridge.swift",
+      "sha256": "f50ea076e4a2a6781df6f4e0c8a747e2c3b77465ca02f89955f45a592ca2d7aa"
+    },
+    {
+      "path": "apple/MacStandalone/StandaloneQuotaStore.swift",
+      "sha256": "a5b4b21ba62fe69213cb9fe4d23018e082dfbb9ec7827cabe6236a7e13d818b0"
+    },
+    {
+      "path": "apple/MacStandalone/YuliangStandaloneApp.swift",
+      "sha256": "d19b737381b10fed06d50a843e075a1f8e67d0b82919cb9622ad5c0194c1bda2"
+    },
+    {
+      "path": "apple/Package.swift",
+      "sha256": "75f249f115f64ad79ee1f2aafbde73ac5678fb7cfe7c51dc2f8f4330bfb7a4c2"
+    },
+    {
+      "path": "apple/Resources/original-buddies-v1.png",
+      "sha256": "45cf4c218af648fc367109000c943084e5b51d8bf355ca070466be9c651f4559"
+    },
+    {
+      "path": "apple/Resources/provider-codex.png",
+      "sha256": "752ebb4e3da554e33ff9d490722c564871466c75530e91da89f56cdc770ed5aa"
+    },
+    {
+      "path": "apple/scripts/build-standalone.mjs",
+      "sha256": "b583f8d51b9a656d1ea8be617ee5a43f5f3757a5cacd73b68f6e3b246a31a699"
+    },
+    {
+      "path": "apple/scripts/check-claude-collector.mjs",
+      "sha256": "ef49a75881c588d5f4369fd326784410840117802e9c0dbb7583f474aab05e7c"
+    },
+    {
+      "path": "apple/scripts/check-codex-collector.mjs",
+      "sha256": "07c9d7f36402fefe2ce606a000d776cea5667a456b16d638c25d91579fbe5f1d"
+    },
+    {
+      "path": "apple/scripts/check-core.mjs",
+      "sha256": "4dd2c3c1e3953552c8c4b75dcda3be1f53317073acdcb27f06b4f4928cf4e0af"
+    },
+    {
+      "path": "apple/scripts/check-desktop-shell.swift",
+      "sha256": "e58e3b3dfecd259c8f39971cac372183348fa2570e2da1e4707522812032ae38"
+    },
+    {
+      "path": "apple/scripts/check-plugin-bridge.mjs",
+      "sha256": "b8e922de87e407007cb98c2d1674d4fbc6d95bbffddcc186ffacb70e47e3118c"
+    },
+    {
+      "path": "apple/scripts/check-plugin-bridge.swift",
+      "sha256": "b001b819ad83abf00d33fcaec155f14c7f2c242333f118cbb0231ff7064aa922"
+    },
+    {
+      "path": "apple/scripts/check-public.mjs",
+      "sha256": "d354c4740623d11c7cf646d20afb915c3171b7f1c8e3ce137edff9c52def9761"
+    },
+    {
+      "path": "apple/scripts/check-standalone-interactions.swift",
+      "sha256": "7fead196cb553d8389133e7f23c47cb9df7285d4d5bebf86f8027890ebd43559"
+    },
+    {
+      "path": "apple/scripts/check-standalone-ui.mjs",
+      "sha256": "612ec01f69956f76a1bfde5edaa1743e87f058c92c1947c22a0acfd53e538eb5"
+    },
+    {
+      "path": "apple/scripts/fixtures/fake-codex-app-server.mjs",
+      "sha256": "f8e2f9cddf3a7f853119dc6b0c6a057fdd3212fdf12d8c83ff03595b32c8e858"
+    },
+    {
+      "path": "apple/scripts/install-standalone.mjs",
+      "sha256": "d80730e83bdb9bd9a3043f08ecf8990d1b891100e76d19599c3dfcebcea27013"
+    },
+    {
+      "path": "apple/scripts/package-release.mjs",
+      "sha256": "be5a51ec8ce174eed3a16896fdfed1f7f4b0a7fae87aa39d4a128200255922ce"
+    },
+    {
+      "path": "apple/scripts/test-codex-collector.swift",
+      "sha256": "9787ee50c37381464f9c36ac3906652a5fa272c8327ad0a83defb0770f74c7cd"
+    },
+    {
+      "path": "apple/scripts/test-standalone-collector.swift",
+      "sha256": "00aa81145c57afeff1583e7e1446cdd3f87384add2a604f69c7b1b792cad7a55"
+    },
+    {
+      "path": "apple/Shared/OriginalBuddy.swift",
+      "sha256": "68be7dba715be885e6eb82bae94a9c71d5754c554ba95fc362afcc88b07bf0a9"
+    },
+    {
+      "path": "apple/Shared/QuotaCard.swift",
+      "sha256": "c300f8ddac018957e1a5fc43119541e4de1497e0b56bc9f6c66bc670bc1663db"
+    },
+    {
+      "path": "apple/Sources/QuotaCore/AppLanguage.swift",
+      "sha256": "d46af1a3ee1e393ecafb0d36a76fa3c42a2f99e789b00b024f80ecc8cd2566a0"
+    },
+    {
+      "path": "apple/Sources/QuotaCore/BuddyCompanion.swift",
+      "sha256": "92c151129cd80595182b3236b1e3e314262708faa082f4e2b6bba2565f2f4359"
+    },
+    {
+      "path": "apple/Sources/QuotaCore/BuddyFeedback.swift",
+      "sha256": "c7f5910501d48138db00a4f0d60facf96f52a6db9d90ef4b286b5752e5663f21"
+    },
+    {
+      "path": "apple/Sources/QuotaCore/BuddyInteraction.swift",
+      "sha256": "1d58b429f710a990f6cd949a915d3de987be0d2843b569dcdacbab655065759d"
+    },
+    {
+      "path": "apple/Sources/QuotaCore/QuotaCore.swift",
+      "sha256": "0d53a154537af54b0e25376da1cd1e9bf4884a298d70bd7615222224326ff31d"
+    },
+    {
+      "path": "apple/Sources/QuotaCore/QuotaRailGeometry.swift",
+      "sha256": "1867e038f5d344dfd20c958261c6e507b4222f3e12b8f74366d62f3769dabbad"
+    },
+    {
+      "path": "apple/Tests/QuotaCoreTests/AppLanguageTests.swift",
+      "sha256": "f2a665a3807ff0f8256d721386d4e7740f27cf57fe0c91e1f645f22f4d6f403f"
+    },
+    {
+      "path": "apple/Tests/QuotaCoreTests/BuddyCompanionTests.swift",
+      "sha256": "79def660ce4eb0dad9d633a73bb638647ccccbc09c39b76aca4d37be22824b1b"
+    },
+    {
+      "path": "apple/Tests/QuotaCoreTests/BuddyFeedbackTests.swift",
+      "sha256": "66f2061aa5c82de85a88ecf0496bab0687313b4e37dbffc1f68c9e7e96db8360"
+    },
+    {
+      "path": "apple/Tests/QuotaCoreTests/BuddyInteractionTests.swift",
+      "sha256": "d066fa8afa02bb4b0aa46b96c50393d81fa306f5a441e1241ce54b40583fba91"
+    },
+    {
+      "path": "apple/Tests/QuotaCoreTests/QuotaCharacterTests.swift",
+      "sha256": "f76f78e8e586204267dd3611eba61aa3f7f2127e7d5fbfa8563e3b2e2df4d348"
+    },
+    {
+      "path": "apple/Tests/QuotaCoreTests/QuotaCoreTests.swift",
+      "sha256": "b56584e620aadc4adc1685c9c123b45513beed3da552dfbb4f00fab9c3510e28"
+    },
+    {
+      "path": "apple/Tests/QuotaCoreTests/QuotaRailGeometryTests.swift",
+      "sha256": "4e6a5b7bef4d688ff719a0045421414abe1822f9c607b217c819237b64b7b620"
+    },
+    {
+      "path": "ASSETS.md",
+      "sha256": "3006964e3f785d33fd42f72b662c84726ba5cea8aabf3c366ce0e5824fb23bdf"
+    },
+    {
+      "path": "CHANGELOG.md",
+      "sha256": "0af686bb4e80eb7246b45cc83bc8f60af4f651c9ceb7088fe1e337a1e8307827"
+    },
+    {
+      "path": "CONTRIBUTING.md",
+      "sha256": "9ee3b9ef10f2dc4bace1efe8baa621e7679836312e60c4a940bae61cf2527d5e"
+    },
+    {
+      "path": "docs/assets/compact-dark.png",
+      "sha256": "a06da5eebaab7999895f9ffb17c32911045b24d23dc0c4a3fbf5830aacc19202"
+    },
+    {
+      "path": "docs/assets/compact.png",
+      "sha256": "ed7c2cbbf51646e2c8b55acd9d851007f8e594ed8864d5deb2c7da57993b1315"
+    },
+    {
+      "path": "docs/assets/duo-dark.png",
+      "sha256": "5e63d4e70708d923ecf81537604754cca307aa7bca5f0ff88e5701ff9fa94a2d"
+    },
+    {
+      "path": "docs/assets/duo.png",
+      "sha256": "dd45818c5982269b0ccf25478a8614a64396fa99fda0b4dca8910f8dfb8eceec"
+    },
+    {
+      "path": "docs/assets/settings-dark.png",
+      "sha256": "49638e4c1376c213059f3bc51237330868b458c7e1c9ba54e1b205283ff9e206"
+    },
+    {
+      "path": "docs/assets/settings.png",
+      "sha256": "4c5810960dcfee273104a8819f8c00ffcb46ee7a25932e1a1afe48d700f942bc"
+    },
+    {
+      "path": "docs/assets/widget-dark.png",
+      "sha256": "64f874a67996d446acdb5057ddee7ee26c53ade594564eeb9d2116a9e09bcf83"
+    },
+    {
+      "path": "docs/assets/widget.png",
+      "sha256": "82765a4bbc5058987332717b9dc9dc6b17b4d0ab9ffdb5570d968d65b0d34b91"
+    },
+    {
+      "path": "docs/YULIANG-PLUGIN.md",
+      "sha256": "50939e0b303e9ea72192cdb9e96c06013b5f2d1a327d83d821608a326dbeb205"
+    },
+    {
+      "path": "downloads/Yuliang-Plugin-v0.1.0-beta.1.sha256",
+      "sha256": "9549b32873069f6e068c8ce318b69393da78dc22bd8031eccc4c61f629d50930"
+    },
+    {
+      "path": "downloads/Yuliang-Plugin-v0.1.0-beta.1.zip",
+      "sha256": "4e37a0ce793a1c5120bbcbe1fde12171a67264fa9be0fa36974be6c0dd88f5c2"
+    },
+    {
+      "path": "extension/parser.js",
+      "sha256": "652e4343e90867844915c87be102014b56e605e5c18a61d46208a3a1f03c7212"
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "f824812da9793126f1a46d33d999ea3bbec9fa06dfaaceb94654531a257031da"
+    },
+    {
+      "path": "package.json",
+      "sha256": "da2e28e8cbcac41c7f1f08da4853d4f1edb0a3f1400dc791d82dd0bfea3d505e"
+    },
+    {
+      "path": "plugins/yuliang/.codex-plugin/plugin.json",
+      "sha256": "e6964f664782360320bd644eeb7b89bddee285b70e640caba9cd0ae67924aeed"
+    },
+    {
+      "path": "plugins/yuliang/.mcp.json",
+      "sha256": "95c3b928629712f376806a00af718be081800fbff712021fe67e3c9c719da5c7"
+    },
+    {
+      "path": "plugins/yuliang/mcp.json",
+      "sha256": "28597da1737a0ba06d21170e1c7e2b18f44091d5f3a1934be9ec6e59495cec1c"
+    },
+    {
+      "path": "plugins/yuliang/plugin.json",
+      "sha256": "9a477987f4f13e9a531401df355ec27244743a49389eb946e64787faf602d2aa"
+    },
+    {
+      "path": "plugins/yuliang/README.md",
+      "sha256": "78a74e5f74817660bfe8db2348dda07746389a68351df898973ebfcf87ca900b"
+    },
+    {
+      "path": "plugins/yuliang/server/bridge.mjs",
+      "sha256": "06e0c01f6efc1b0016008beb1d93cf0183cf7fce23fb670e0a0a16c2cac9d826"
+    },
+    {
+      "path": "plugins/yuliang/server/cli.mjs",
+      "sha256": "7ac17590f95ed3574e695ddeebf1929ad40de590f8f54fe43c4f614ca3c28e95"
+    },
+    {
+      "path": "plugins/yuliang/server/index.mjs",
+      "sha256": "c43b71673ffdb7c7c0e1de1abff034228649387e3b8d5e1d5c884d67be8ad813"
+    },
+    {
+      "path": "plugins/yuliang/server/protocol.mjs",
+      "sha256": "8ab9dc362bb26bf6291eaf2adb051d93e8f5b1ce12c822e434e2a0eeff1197fc"
+    },
+    {
+      "path": "plugins/yuliang/server/tools.mjs",
+      "sha256": "d7d53659c967ae4752dc084c7ef36863512efcf9639eb081c6a4a4f9e1b7118f"
+    },
+    {
+      "path": "plugins/yuliang/skills/yuliang/agents/openai.yaml",
+      "sha256": "3e11c83b0e5bc2fe456edebb827e0328d40a11b25ee14714874220aca31ce365"
+    },
+    {
+      "path": "plugins/yuliang/skills/yuliang/SKILL.md",
+      "sha256": "6b5b9dbc2dc4d724a71882a2832f5b9f704051c4f1b0a1c3ff754f7ecde36097"
+    },
+    {
+      "path": "PROGRESS-INTERACTION-REFERENCES.md",
+      "sha256": "b0204ffd8dcaceaa9c76995463bf6f8516ab7b57760a3c31bf0a6c7e72ae934a"
+    },
+    {
+      "path": "README.en.md",
+      "sha256": "3c9f566076c6555b6ea6ac9dac946edc753294f8602406337c8a56f682857345"
+    },
+    {
+      "path": "README.md",
+      "sha256": "4c6d4bbe99ff619e7278aff68799ee1829bfd8eda92cdcc43208516385fb0911"
+    },
+    {
+      "path": "RELEASE-v0.17.0.md",
+      "sha256": "02750e543600817afadf0836fab071604de55e8227451b7e84d7449fe4c9ae08"
+    },
+    {
+      "path": "scripts/package-plugin.mjs",
+      "sha256": "acb5edb56c6415215d29183e30d15b096042237e5aa6dbe64ce668fb31a098aa"
+    },
+    {
+      "path": "SECURITY.md",
+      "sha256": "1c392498bdf8f9da80f35ec33bdc9265a77a28caa06d384ff03ff3e19c75bb02"
+    },
+    {
+      "path": "tests/plugin.test.mjs",
+      "sha256": "ae591e18ceaf2b252d373629c737a1be85f2968eaa5705f07d2e2927b2546256"
+    }
+  ]
+}

@@ -48,7 +48,26 @@ async function inspectBundle(directory) {
   }
 }
 await inspectBundle(app);
-for (const name of ['original-buddies-v1.png', 'LICENSE.txt', 'ASSETS.md', 'parser.js']) {
+const visualResources = ['original-buddies-v1.png', 'provider-codex.png'];
+const optionalAtlas = 'new-buddies-v017.png';
+try {
+  const source = await lstat(path.join(root, 'apple/Resources', optionalAtlas));
+  if (!source.isFile() || source.isSymbolicLink() || source.size === 0) {
+    throw new Error('可选人物资源必须是实际的非空文件。');
+  }
+  visualResources.push(optionalAtlas);
+} catch (error) {
+  if (error.code !== 'ENOENT') throw error;
+  // A public-source build cannot silently acquire an excluded local reference
+  // atlas from an older installed app or a different checkout.
+  try {
+    await lstat(path.join(app, 'Contents/Resources', optionalAtlas));
+    throw new Error('发行应用包含当前公开源码未提供的可选人物资源，请重新构建。');
+  } catch (bundleError) {
+    if (bundleError.code !== 'ENOENT') throw bundleError;
+  }
+}
+for (const name of [...visualResources, 'LICENSE.txt', 'ASSETS.md', 'parser.js']) {
   const resource = path.join(app, 'Contents/Resources', name);
   const attributes = await lstat(resource);
   if (!attributes.isFile() || attributes.isSymbolicLink() || attributes.size === 0) {
@@ -58,6 +77,13 @@ for (const name of ['original-buddies-v1.png', 'LICENSE.txt', 'ASSETS.md', 'pars
 const bundledParser = await readFile(path.join(app, 'Contents/Resources/parser.js'));
 const sourceParser = await readFile(path.join(root, 'extension/parser.js'));
 if (!bundledParser.equals(sourceParser)) throw new Error('Claude 解析器与当前源码不一致，请重新构建后打包。');
+for (const name of visualResources) {
+  const [bundled, source] = await Promise.all([
+    readFile(path.join(app, 'Contents/Resources', name)),
+    readFile(path.join(root, 'apple/Resources', name)),
+  ]);
+  if (!bundled.equals(source)) throw new Error(`界面资源 ${name} 与当前源码不一致，请重新构建后打包。`);
+}
 const executable = run('plutil', ['-extract', 'CFBundleExecutable', 'raw', '-o', '-', info], true);
 if (!/^[A-Za-z0-9_-]+$/.test(executable)) throw new Error('应用可执行文件名无效。');
 const architectures = run('lipo', ['-archs', path.join(app, 'Contents/MacOS', executable)], true).split(/\s+/).sort();

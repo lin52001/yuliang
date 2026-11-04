@@ -39,9 +39,13 @@ jobs:
           node --input-type=module -e 'import fs from "node:fs"; const p = JSON.parse(fs.readFileSync("package.json", "utf8")); if (process.env.GITHUB_REF_TYPE === "tag" && process.env.GITHUB_REF_NAME !== `v${p.version}`) throw new Error("Tag and package versions do not match");'
       - run: npm run check
       - run: npm test
+      - run: npm run test:plugin
       - run: npm run check:codex
       - run: npm run build:mac
       - run: npm run release:mac
+      - name: Package local plugin
+        if: matrix.arch == 'arm64'
+        run: npm run release:plugin
       - uses: actions/upload-artifact@v7
         with:
           name: yuliang-macos-${{ matrix.arch }}
@@ -74,6 +78,8 @@ jobs:
           import crypto from 'node:crypto';
           const p = JSON.parse(fs.readFileSync('package.json', 'utf8'));
           const names = ['arm64', 'x86_64'].map(arch => `Yuliang-v${p.version}-macOS-${arch}.zip`);
+          const plugin = JSON.parse(fs.readFileSync('plugins/yuliang/plugin.json', 'utf8'));
+          names.push(`Yuliang-Plugin-v${plugin.version}.zip`);
           const sums = names.map(name => `${crypto.createHash('sha256').update(fs.readFileSync(`dist-release/${name}`)).digest('hex')}  ${name}`);
           fs.writeFileSync('dist-release/SHA256SUMS', sums.join('\n') + '\n');
           fs.appendFileSync(process.env.GITHUB_ENV, `RELEASE_TAG=v${p.version}\n`);

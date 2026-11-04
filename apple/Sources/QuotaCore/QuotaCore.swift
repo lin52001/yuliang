@@ -13,17 +13,19 @@ public enum QuotaProvider: String, Codable, Sendable, CaseIterable {
     }
 }
 
-/// Original buddies ship with the open-source edition. Legacy identifiers remain
+/// Built-in buddies ship with the app. Legacy identifiers remain
 /// decodable so a local theme choice never invalidates an existing quota store.
 public enum QuotaCharacter: String, Codable, Sendable, CaseIterable {
     case mochiCat, butterBunny, mintFox, sesameBear, dragonGirl, cloudSprite
     case claudeGirl, deepseekGirl, geminiGirl
+    case nailong, swordCat
     case kuromi, myMelody
 
     public static let builtInCharacters: [Self] = [.dragonGirl, .claudeGirl, .deepseekGirl, .geminiGirl,
-        .mochiCat, .butterBunny, .mintFox, .sesameBear, .cloudSprite]
-    /// Newly drawn themes, not a statement of endorsement by model providers.
-    public static let originalCharacters: [Self] = builtInCharacters
+        .cloudSprite, .nailong, .swordCat]
+    /// Compatibility name for the app's earlier newly drawn themes. This does
+    /// not declare ownership of an upstream character or any official endorsement.
+    public static let originalCharacters: [Self] = [.dragonGirl, .claudeGirl, .deepseekGirl, .geminiGirl, .cloudSprite]
     public var isOriginal: Bool { Self.originalCharacters.contains(self) }
     public var name: String {
         switch self {
@@ -36,6 +38,8 @@ public enum QuotaCharacter: String, Codable, Sendable, CaseIterable {
         case .claudeGirl: "橘光学姐"
         case .deepseekGirl: "蓝鲸少女"
         case .geminiGirl: "星喵少女"
+        case .nailong: "奶龙"
+        case .swordCat: "持剑小猫"
         case .kuromi: "库洛米"
         case .myMelody: "美乐蒂"
         }
@@ -51,6 +55,8 @@ public enum QuotaCharacter: String, Codable, Sendable, CaseIterable {
         case .claudeGirl: "#C66D4F"
         case .deepseekGirl: "#477DBC"
         case .geminiGirl: "#7369B5"
+        case .nailong: "#B28B28"
+        case .swordCat: "#658783"
         }
     }
     /// Cycling returns to the built-in catalog, including from a legacy local theme.

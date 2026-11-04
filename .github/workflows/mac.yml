@@ -40,6 +40,8 @@ jobs:
         run: npm run check
       - name: Test snapshot and interaction rules
         run: npm test
+      - name: Test desktop plugin transport and input validation
+        run: npm run test:plugin
       - name: Test local Codex protocol (synthetic CLI only)
         run: npm run check:codex
       - name: Build and verify native app

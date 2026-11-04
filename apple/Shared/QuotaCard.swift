@@ -38,6 +38,40 @@ enum QuotaPalette {
     }
 }
 
+/// Provider identity is independent from the selected companion theme.
+struct ProviderBrandMark: View {
+    let provider: QuotaProvider
+    var size: CGFloat = 12
+    var body: some View {
+        Group {
+            if provider == .codex {
+                codexMark
+            } else if provider == .claude {
+                Image(systemName: "sun.max.fill").resizable().scaledToFit()
+                    .foregroundStyle(Color(red: 0.78, green: 0.45, blue: 0.32))
+            } else {
+                Image(systemName: "terminal.fill").resizable().scaledToFit()
+                    .foregroundStyle(.secondary)
+            }
+        }.frame(width: size, height: size).accessibilityHidden(true)
+    }
+    @ViewBuilder private var codexMark: some View {
+        #if os(macOS)
+        if let image = BuddyArtworkCache.installedCodexIcon {
+            image.resizable().interpolation(.high).scaledToFit()
+        } else { bundledCodexMark }
+        #else
+        bundledCodexMark
+        #endif
+    }
+    @ViewBuilder private var bundledCodexMark: some View {
+        if let image = BuddyArtworkCache.load("provider-codex", from: .main) {
+            image.resizable().interpolation(.high).scaledToFit()
+                .clipShape(RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
+        } else { Image(systemName: "terminal.fill").resizable().scaledToFit() }
+    }
+}
+
 enum BuddyActivitySource: Equatable { case usage, play, companion }
 
 /// Shared by both surfaces. Opening a second view does not restart the event.
@@ -111,6 +145,12 @@ private extension QuotaCharacter {
 @MainActor
 private enum BuddyArtworkCache {
     private static var images: [String: Image] = [:]
+    #if os(macOS)
+    static let installedCodexIcon: Image? = {
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.openai.codex") else { return nil }
+        return Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+    }()
+    #endif
     static func load(_ name: String, from bundle: Bundle) -> Image? {
         guard let url = bundle.url(forResource: name, withExtension: "png") else { return nil }
         if let image = images[url.path] { return image }
@@ -131,6 +171,7 @@ struct BuddySprite: View {
     let frame: Int
     var size: CGFloat = 56
     var resourceBundle: Bundle = .main
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var atlas: (image: Image, row: Int, rowCount: Int)? {
         if let row = character.illustrationRow,
            let image = BuddyArtworkCache.load("original-buddies-v1", from: resourceBundle) {
@@ -139,6 +180,10 @@ struct BuddySprite: View {
         if character == .kuromi || character == .myMelody,
            let image = BuddyArtworkCache.load("anime-satiety-atlas-v1", from: resourceBundle) {
             return (image, character == .kuromi ? 0 : 1, 2)
+        }
+        if character == .nailong || character == .swordCat,
+           let image = BuddyArtworkCache.load("new-buddies-v017", from: resourceBundle) {
+            return (image, character == .nailong ? 0 : 1, 2)
         }
         return nil
     }
@@ -150,6 +195,13 @@ struct BuddySprite: View {
                     .offset(x: -CGFloat(max(0, min(5, frame))) * size, y: -CGFloat(atlas.row) * size)
                     .frame(width: size, height: size, alignment: .topLeading).clipped()
                     .allowsHitTesting(false)
+            } else if character == .nailong || character == .swordCat {
+                // A damaged/missing atlas must not impersonate another buddy.
+                Image(systemName: character.signatureSymbol)
+                    .font(.system(size: size * 0.4, weight: .medium))
+                    .foregroundStyle(QuotaPalette.accent(for: character))
+                    .frame(width: size, height: size)
+                    .background(QuotaPalette.accent(for: character).opacity(0.08), in: Circle())
             } else {
                 OriginalBuddy(character: character, frame: frame, size: size)
             }
@@ -160,6 +212,11 @@ struct BuddySprite: View {
         .contentShape(Rectangle())
         .accessibilityHidden(true)
         .transaction { $0.animation = nil }
+        // Swap silhouettes with an outer dissolve, while atlas frame/crop
+        // changes remain instantaneous inside the sprite's own transaction.
+        .id(character)
+        .transition(.opacity)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.22), value: character)
     }
 }
 
@@ -195,6 +252,12 @@ private struct BuddyMotionProfile {
         case .cloudSprite:
             waveAngle = 6; napAngle = 4; cheerLift = 3; mouthY = 0.05
             jumpLift = 8.5; danceAngle = 9; danceSway = 2.8
+        case .nailong:
+            mouthY = -0.20; waveAngle = 5; napAngle = 3; chewLift = 1.3
+            jumpLift = 6; danceAngle = 7; danceSway = 2
+        case .swordCat:
+            mouthY = -0.015; waveAngle = 4; napAngle = 3; jumpLift = 9
+            danceAngle = 5; danceSway = 1.6; spinDirection = -1
         case .mochiCat:
             waveAngle = 9; napAngle = 7; patScale = 0.06; cheerLift = 4
             jumpLift = 7; danceAngle = 11; danceSway = 2.4; spinDirection = -1
@@ -304,68 +367,68 @@ private struct QuotaCardContent: View, Animatable {
         return presentation.window?.label ?? "网页订阅"
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: slim ? 4 : compact ? 6 : 10) {
+        VStack(alignment: .leading, spacing: slim ? (compact ? 2 : 4) : compact ? 6 : 10) {
             if slim {
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text(presentation.window?.label ?? "订阅额度")
+                    Text(YuliangL10n.text(presentation.window?.label ?? "订阅额度"))
                         .font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary).lineLimit(1)
                     Circle().fill(presentation.freshness == .fresh && remaining != nil ? Color.green : Color.secondary)
-                        .frame(width: 4, height: 4).help(status).accessibilityLabel(status)
+                        .frame(width: 4, height: 4).help(YuliangL10n.text(status)).accessibilityLabel(YuliangL10n.text(status))
                     Spacer(minLength: 4)
-                    Text(remaining == nil ? "待确认" : readingLabel)
+                    Text(YuliangL10n.text(remaining == nil ? "待确认" : readingLabel))
                         .font(.system(size: 9)).foregroundStyle(.secondary)
-                    readout.font(.system(size: 22, weight: .semibold, design: .rounded))
+                    readout.font(.system(size: slim && compact ? 18 : 22, weight: .semibold, design: .rounded))
                         .fixedSize(horizontal: true, vertical: false)
                 }
             } else {
             HStack(spacing: compact ? 4 : 6) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(minimal ? "订阅额度" : providerName).font(.system(size: compact ? 12 : 13, weight: .semibold))
-                    Text(minimal ? (presentation.window?.label ?? "等待读取") : subtitle)
+                    Text(YuliangL10n.text(minimal ? "订阅额度" : providerName)).font(.system(size: compact ? 12 : 13, weight: .semibold))
+                    Text(YuliangL10n.text(minimal ? (presentation.window?.label ?? "等待读取") : subtitle))
                         .font(.system(size: compact ? 9 : 10)).foregroundStyle(.secondary).lineLimit(1)
                 }
                 Circle().fill(presentation.freshness == .fresh ? Color.green : Color.secondary).frame(width: 4, height: 4)
-                    .help(status).accessibilityLabel(status)
+                    .help(YuliangL10n.text(status)).accessibilityLabel(YuliangL10n.text(status))
                 Spacer(minLength: 0)
                 if compact {
                     HStack(alignment: .firstTextBaseline, spacing: 2) {
-                        Text(remaining == nil ? "待确认" : readingLabel)
+                        Text(YuliangL10n.text(remaining == nil ? "待确认" : readingLabel))
                             .font(.system(size: 9)).foregroundStyle(.secondary)
-                        readout.font(.system(size: 22, weight: .semibold, design: .rounded))
+                        readout.font(.system(size: slim && compact ? 18 : 22, weight: .semibold, design: .rounded))
                     }.fixedSize(horizontal: true, vertical: false)
                 } else {
                     VStack(alignment: .trailing, spacing: 0) {
-                        Text(readingLabel).font(.system(size: 9)).foregroundStyle(.secondary)
+                        Text(YuliangL10n.text(readingLabel)).font(.system(size: 9)).foregroundStyle(.secondary)
                         readout.font(.system(size: 30, weight: .semibold, design: .rounded))
                     }
                 }
             }
             }
             QuotaRail(remainingPercent: remaining, character: document.preferences.character, frame: frame,
-                      accent: accent, size: slim ? 36 : compact ? 48 : 56, resourceBundle: resourceBundle,
+                      accent: accent, size: slim ? (compact ? 28 : 36) : compact ? 48 : 56, resourceBundle: resourceBundle,
                       onPat: onPat, widgetInteraction: widgetInteraction, activity: activity, activityPreviewElapsed: activityPreviewElapsed,
-                      onAction: onAction, trackHeight: slim ? 14 : nil)
-                .frame(height: slim ? 36 : compact ? 48 : 56)
-            if !minimal && !compact { Text(title).font(.system(size: 12, weight: .medium)).lineLimit(1) }
+                      onAction: onAction, trackHeight: slim ? (compact ? 8 : 12) : nil)
+                .frame(height: slim ? (compact ? 28 : 36) : compact ? 48 : 56)
+            if !minimal && !compact { Text(YuliangL10n.text(title)).font(.system(size: 12, weight: .medium)).lineLimit(1) }
             if !minimal { HStack(alignment: .firstTextBaseline) {
-                Text(used.map { "已用 \(String(format: "%.0f", $0))%" } ?? "已用量未知")
+                Text(used.map { YuliangL10n.format("已用 {0}%", String(format: "%.0f", $0)) } ?? YuliangL10n.text("已用量未知"))
                 Spacer(minLength: 3)
                 if let date = presentation.observedAt {
                     Group {
                         if compact && presentation.provider == .codex {
-                            Text("读于 \(date.formatted(date: .omitted, time: .standard))")
+                            Text(YuliangL10n.format("读于 {0}", date.formatted(.dateTime.hour().minute().second().locale(YuliangL10n.language.locale))))
                         }
-                        else if compact { Text("读于 \(date, style: .time)") }
-                        else { Text("读取 \(date, style: .relative)前") }
-                    }.monospacedDigit().accessibilityLabel("最后读取 \(date.formatted())")
-                } else { Text("未读取") }
+                        else if compact { Text(YuliangL10n.format("读于 {0}", date.formatted(.dateTime.hour().minute().locale(YuliangL10n.language.locale)))) }
+                        else { Text(YuliangL10n.format("读于 {0}", date.formatted(.dateTime.hour().minute().locale(YuliangL10n.language.locale)))) }
+                    }.monospacedDigit().accessibilityLabel(YuliangL10n.format("最后读取 {0}", date.formatted(.dateTime.locale(YuliangL10n.language.locale))))
+                } else { Text(YuliangL10n.text("未读取")) }
             }.font(.system(size: compact ? 10 : 11)).foregroundStyle(.secondary).lineLimit(1)
             if !compact {
                 HStack {
-                    Text(status)
+                    Text(YuliangL10n.text(status))
                     Spacer(minLength: 3)
                     if let reset = presentation.resetAt, reset > now {
-                        Text("重置 \(reset, style: .time)")
+                        Text(YuliangL10n.format("重置 {0}", reset.formatted(.dateTime.hour().minute().locale(YuliangL10n.language.locale))))
                     }
                 }.font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
             }
@@ -375,7 +438,7 @@ private struct QuotaCardContent: View, Animatable {
     var readout: some View {
         Text(remaining.map { String(format: "%.0f%%", $0) } ?? "—")
             .monospacedDigit()
-            .accessibilityLabel(remaining.map { "剩余百分之\(Int($0.rounded()))" } ?? "剩余额度未知")
+            .accessibilityLabel(remaining.map { YuliangL10n.format("剩余百分之{0}", String(Int($0.rounded()))) } ?? YuliangL10n.text("剩余额度未知"))
     }
 }
 
@@ -422,27 +485,7 @@ struct QuotaRail: View {
         GeometryReader { geometry in
             let layout = QuotaRailGeometry(width: geometry.size.width, avatarSize: size, remainingPercent: isKnown ? progress : nil)
             ZStack(alignment: .leading) {
-                if let trackHeight {
-                    refinedTrack(layout, height: trackHeight)
-                } else {
-                Capsule().fill(accent.opacity(colorScheme == .dark ? 0.12 : 0.065))
-                    .frame(height: trackHeight)
-                // Crop a full-size capsule. A narrow capsule becomes a
-                // vertical pill at low percentages, which misrepresents the track.
-                Capsule().fill(accent.opacity(colorScheme == .dark ? 0.24 : 0.13))
-                    .frame(height: trackHeight)
-                    .mask(alignment: .leading) { Rectangle().frame(width: layout.fillWidth) }
-                if layout.isKnown && trackHeight == nil {
-                    HStack(spacing: 0) {
-                        ForEach(0..<8) { index in
-                            Image(systemName: index % 2 == 0 ? "sparkle" : "heart.fill")
-                                .font(.system(size: 9)).frame(maxWidth: .infinity)
-                        }
-                    }
-                    .foregroundStyle(accent.opacity(0.55))
-                    .mask(alignment: .leading) { Rectangle().frame(width: layout.foodClipWidth) }
-                }
-                }
+                refinedTrack(layout, height: trackHeight ?? (size < 50 ? 10 : 12))
                 if let activity {
                     if let elapsed = activityPreviewElapsed {
                         activeBuddy(activity, elapsed: elapsed, size: layout.avatarSize)
@@ -481,8 +524,8 @@ struct QuotaRail: View {
                 ForEach(1..<10) { tick in
                     let reached = Double(tick) * 10 <= progress
                     if tick % 2 == 0 {
-                        Image(systemName: "sparkle")
-                            .font(.system(size: 5.5, weight: .semibold))
+                        Image(systemName: character.signatureEffect == .starlight ? "sparkle" : "circle.fill")
+                            .font(.system(size: character.signatureEffect == .starlight ? 5.5 : 2.2, weight: .semibold))
                             .foregroundStyle(reached ? Color.white.opacity(0.82) : accent.opacity(0.28))
                             .frame(width: 7, height: 7)
                             .offset(x: layout.width * Double(tick) / 10 - 3.5)
@@ -502,7 +545,7 @@ struct QuotaRail: View {
             }
             if let hoverX, onAction != nil {
                 Circle().fill(accent.opacity(0.15)).frame(width: 18, height: 18)
-                    .overlay { Image(systemName: "heart.fill").font(.system(size: 7)).foregroundStyle(accent) }
+                    .overlay { Image(systemName: character.signatureSymbol).font(.system(size: 7)).foregroundStyle(accent) }
                     .offset(x: min(max(0, layout.width - 18), max(0, hoverX - 9)))
             }
         }
@@ -526,13 +569,13 @@ struct QuotaRail: View {
         .gesture(SpatialTapGesture().onEnded { value in
             guard let onAction else { onPat?(); return }
             let ratio = value.location.x / max(1, layout.width)
-            let choices: [BuddyAction] = [.peek, .nuzzle, .celebrate, .stretch]
+            let choices: [BuddyAction] = [.peek, .nuzzle, character.signatureAction, .stretch]
             onAction(choices[min(3, max(0, Int(ratio * 4)))])
         })
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("星光额度轨道")
-        .accessibilityValue(isKnown ? "剩余百分之\(Int(progress.rounded()))" : "额度未知")
-        .accessibilityHint(onAction == nil ? "" : "点按与小伙伴互动，额度不会改变")
+        .accessibilityLabel(YuliangL10n.text("星光额度轨道"))
+        .accessibilityValue(isKnown ? YuliangL10n.format("剩余百分之{0}", String(Int(progress.rounded()))) : YuliangL10n.text("额度未知"))
+        .accessibilityHint(onAction == nil ? "" : YuliangL10n.text("点按与小伙伴互动，额度不会改变"))
         .accessibilityAddTraits(onAction == nil ? [] : .isButton)
         .accessibilityAction { onAction?(.peek) }
         .accessibilityIdentifier("yuliang.quota.rail")
@@ -541,15 +584,30 @@ struct QuotaRail: View {
     private func trackResponse(_ layout: QuotaRailGeometry, activity: BuddyActivity, elapsed: TimeInterval) -> some View {
         let t = min(1, max(0, elapsed / max(0.001, activity.duration)))
         let visible = elapsed >= 0 && elapsed < activity.duration
-        let ripple = sin(t * .pi)
+        let envelope = pow(sin(t * .pi), 2)
+        let x = min(max(16, layout.fillWidth), max(16, layout.width - 16))
+        let responseWidth = min(layout.width, 46 + 24 * envelope)
+        let responseX = min(max(0, x - responseWidth / 2), max(0, layout.width - responseWidth))
         return ZStack(alignment: .leading) {
+            // A local response follows the measured endpoint, never changes its value.
+            Capsule().fill(accent.opacity(0.18 * envelope))
+                .frame(width: responseWidth, height: 3)
+                .offset(x: responseX)
             ForEach(0..<3) { index in
-                Image(systemName: index == 1 ? "heart.fill" : "sparkle")
-                    .font(.system(size: index == 1 ? 6 : 5, weight: .semibold))
-                    .foregroundStyle(accent.opacity(0.8))
-                    .offset(x: min(max(4, layout.fillWidth - Double(index + 1) * 15), max(4, layout.width - 8)),
-                            y: -Double(4 + index * 2) * ripple)
-                    .opacity(visible ? ripple : 0)
+                let phase = t * .pi * 2 + Double(index) * 0.8
+                Group {
+                    if character.signatureEffect == .tideBubble || character.signatureEffect == .puddingBounce {
+                        Circle().stroke(accent.opacity(0.75), lineWidth: 0.85)
+                            .frame(width: Double(3 + index * 2), height: Double(3 + index * 2))
+                    } else {
+                        Image(systemName: character.signatureSymbol)
+                            .font(.system(size: index == 1 ? 6 : 4, weight: .medium))
+                            .foregroundStyle(accent)
+                    }
+                }
+                .offset(x: min(max(3, x - Double(index + 1) * 12 + sin(phase) * 3), max(3, layout.width - 10)),
+                        y: -Double(4 + index * 3) * envelope)
+                .opacity(visible ? envelope : 0)
             }
         }.frame(width: layout.width, height: 14, alignment: .leading)
             .allowsHitTesting(false).accessibilityHidden(true)
@@ -559,7 +617,7 @@ struct QuotaRail: View {
         let t = elapsed.isFinite ? min(1, max(0, elapsed / max(0.001, activity.duration))) : 1
         let eating = active && activity.action == .eating
         let animatedFrame: Int = !active ? frame : eating ? 5 : activity.action == .nap ? 3 : 4
-        let sample = active ? activity.action.motionSample(progress: t, reduceMotion: reduceMotion) : .rest
+        let sample = active ? character.motionSample(action: activity.action, progress: t, reduceMotion: reduceMotion) : .rest
         let transform = adaptedMotion(sample, action: activity.action, size: size)
         ZStack {
             buddy(size: size, spriteFrame: animatedFrame)
@@ -609,13 +667,11 @@ struct QuotaRail: View {
         let fade = reduceMotion ? 1 : sin(min(1, t * 3) * .pi / 2) * min(1, (1 - t) * 5)
         let flourish = reduceMotion ? 0 : sin(t * .pi)
         Group {
-            if action == .celebrate {
-                ForEach(0..<3) { index in
-                    Image(systemName: "star.fill")
-                        .font(.system(size: size * (index == 1 ? 0.17 : 0.12), weight: .semibold))
-                        .offset(x: Double(index - 1) * size * (0.22 + 0.12 * flourish),
-                                y: -size * (index == 1 ? 0.39 : 0.23) - 3 * flourish)
-                }
+            if action == character.signatureAction || action == .celebrate {
+                BuddySignatureFlourish(effect: character.signatureEffect, accent: accent,
+                                       progress: t, size: size, reduceMotion: reduceMotion)
+            } else if action == .idle {
+                EmptyView()
             } else if action == .dance {
                 ForEach(0..<2) { index in
                     Image(systemName: index == 0 ? "music.note" : "music.quarternote.3")
@@ -680,22 +736,23 @@ struct QuotaRail: View {
                 if let onAction {
                     StandaloneBuddyContextMenu(action: onAction,
                         enabled: activity.map { !($0.action == .eating && $0.source == .usage
-                            && Date().timeIntervalSince($0.startedAt) < $0.duration) } ?? true)
+                            && Date().timeIntervalSince($0.startedAt) < $0.duration) } ?? true,
+                        character: character)
                         .accessibilityHidden(true)
                 }
             }
-            .accessibilityHint(onAction == nil ? "点按回应" : "点按随机回应，右键选择互动动作")
+            .accessibilityHint(YuliangL10n.text(onAction == nil ? "点按回应" : "点按随机回应，右键选择互动动作"))
         #else
         interactiveBuddy(size: size, spriteFrame: spriteFrame)
             .contextMenu {
                 if let onAction {
                     ForEach(BuddyAction.interactiveActions, id: \.self) { action in
                         if action == .eating { Divider() }
-                        Button(action.label, systemImage: action.symbol) { onAction(action) }
+                        Button(YuliangL10n.text(action.label), systemImage: action.symbol) { onAction(action) }
                     }
                 }
             }
-            .accessibilityHint(onAction == nil ? "点按回应" : "点按随机回应，右键选择互动动作")
+            .accessibilityHint(YuliangL10n.text(onAction == nil ? "点按回应" : "点按随机回应，右键选择互动动作"))
         #endif
     }
     @ViewBuilder private func interactiveBuddy(size: Double, spriteFrame: Int?) -> some View {
@@ -705,19 +762,122 @@ struct QuotaRail: View {
             #else
             Button(intent: PatQuotaBuddyIntent()) {
                 BuddySprite(character: character, frame: spriteFrame ?? frame, size: size, resourceBundle: resourceBundle)
-            }.buttonStyle(.plain).accessibilityLabel("摸摸\(character.name)")
+            }.buttonStyle(.plain).accessibilityLabel(YuliangL10n.format("摸摸{0}", YuliangL10n.text(character.name)))
             #endif
         } else if let onPat {
             Button(action: onPat) {
                 BuddySprite(character: character, frame: spriteFrame ?? frame, size: size, resourceBundle: resourceBundle)
-            }.buttonStyle(.plain).accessibilityLabel("和\(character.name)互动")
+            }.buttonStyle(.plain).accessibilityLabel(YuliangL10n.format("和{0}互动", YuliangL10n.text(character.name)))
         } else if let onAction {
             Button { onAction(.pat) } label: {
                 BuddySprite(character: character, frame: spriteFrame ?? frame, size: size, resourceBundle: resourceBundle)
-            }.buttonStyle(.plain).accessibilityLabel("摸摸\(character.name)")
+            }.buttonStyle(.plain).accessibilityLabel(YuliangL10n.format("摸摸{0}", YuliangL10n.text(character.name)))
         } else {
             BuddySprite(character: character, frame: spriteFrame ?? frame, size: size, resourceBundle: resourceBundle)
         }
+    }
+}
+
+/// A small secondary motion gives each silhouette its own visual vocabulary.
+/// All drawing stays around the avatar; the quota anchor is never modified.
+private struct BuddySignatureFlourish: View {
+    let effect: BuddySignatureEffect
+    let accent: Color
+    let progress: Double
+    let size: Double
+    let reduceMotion: Bool
+
+    var body: some View {
+        Canvas { context, _ in
+            let t = reduceMotion ? 0.5 : progress
+            let pulse = sin(t * .pi)
+            let mid = size / 2
+            func stroke(_ path: Path, opacity: Double = 0.8, width: Double = 1) {
+                context.stroke(path, with: .color(accent.opacity(opacity)),
+                               style: StrokeStyle(lineWidth: width, lineCap: .round, lineJoin: .round))
+            }
+            func dot(_ x: Double, _ y: Double, radius: Double, hollow: Bool = false) {
+                let path = Path(ellipseIn: CGRect(x: x - radius, y: y - radius, width: radius * 2, height: radius * 2))
+                if hollow { stroke(path, width: 0.85) }
+                else { context.fill(path, with: .color(accent.opacity(0.85))) }
+            }
+            switch effect {
+            case .dragonSpark:
+                for index in 0..<3 {
+                    let x = mid + Double(index - 1) * size * 0.30
+                    let y = size * (index == 1 ? 0.04 : 0.22) - pulse * size * 0.07
+                    let r = size * (index == 1 ? 0.095 : 0.06)
+                    var flame = Path()
+                    flame.move(to: CGPoint(x: x, y: y - r))
+                    flame.addQuadCurve(to: CGPoint(x: x, y: y + r), control: CGPoint(x: x + r * 1.8, y: y + r * 0.3))
+                    flame.addQuadCurve(to: CGPoint(x: x, y: y - r), control: CGPoint(x: x - r, y: y + r * 0.1))
+                    context.fill(flame, with: .color(accent.opacity(0.72)))
+                }
+            case .amberOrbit:
+                var orbit = Path()
+                orbit.addEllipse(in: CGRect(x: size * 0.08, y: size * 0.15, width: size * 0.84, height: size * 0.56))
+                stroke(orbit, opacity: 0.34, width: 0.75)
+                for index in 0..<3 {
+                    let angle = t * .pi * 2 + Double(index) * .pi * 2 / 3
+                    dot(mid + cos(angle) * size * 0.42, size * 0.43 + sin(angle) * size * 0.28, radius: size * 0.035)
+                }
+            case .tideBubble:
+                for index in 0..<3 {
+                    let x = mid + Double(index - 1) * size * 0.32 + sin(t * .pi * 2 + Double(index)) * size * 0.035
+                    let y = size * (index == 1 ? 0.12 : 0.31) - pulse * size * 0.14
+                    dot(x, y, radius: size * Double(3 + index) / 55, hollow: true)
+                }
+                var wave = Path()
+                wave.move(to: CGPoint(x: size * 0.12, y: size * 0.88))
+                wave.addQuadCurve(to: CGPoint(x: size * 0.88, y: size * 0.88),
+                                  control: CGPoint(x: mid, y: size * (0.88 - pulse * 0.12)))
+                stroke(wave, opacity: 0.45, width: 0.8)
+            case .starlight:
+                var line = Path()
+                for index in 0..<3 {
+                    let x = mid + Double(index - 1) * size * 0.34
+                    let y = size * (index == 1 ? 0.06 : 0.26) - pulse * size * 0.025
+                    let r = size * (index == 1 ? 0.1 : 0.065)
+                    var star = Path()
+                    star.move(to: CGPoint(x: x, y: y - r))
+                    star.addLines([CGPoint(x: x + r * 0.3, y: y - r * 0.25), CGPoint(x: x + r, y: y),
+                                   CGPoint(x: x + r * 0.3, y: y + r * 0.25), CGPoint(x: x, y: y + r),
+                                   CGPoint(x: x - r * 0.3, y: y + r * 0.25), CGPoint(x: x - r, y: y),
+                                   CGPoint(x: x - r * 0.3, y: y - r * 0.25)])
+                    star.closeSubpath()
+                    context.fill(star, with: .color(accent.opacity(0.85)))
+                    if index == 0 { line.move(to: CGPoint(x: x, y: y)) }
+                    else { line.addLine(to: CGPoint(x: x, y: y)) }
+                }
+                stroke(line, opacity: 0.28, width: 0.65)
+            case .cloudDrift:
+                for index in 0..<2 {
+                    let x = size * (index == 0 ? 0.15 : 0.83) + sin(t * .pi * 2) * size * 0.04
+                    let y = size * (index == 0 ? 0.23 : 0.12) - pulse * size * 0.04
+                    var cloud = Path()
+                    cloud.addRoundedRect(in: CGRect(x: x - size * 0.12, y: y, width: size * 0.24, height: size * 0.08), cornerSize: CGSize(width: size * 0.04, height: size * 0.04))
+                    cloud.addEllipse(in: CGRect(x: x - size * 0.065, y: y - size * 0.06, width: size * 0.12, height: size * 0.12))
+                    context.fill(cloud, with: .color(accent.opacity(0.38)))
+                }
+            case .puddingBounce:
+                for index in 0..<2 {
+                    let expansion = pulse * size * 0.08 + Double(index) * size * 0.07
+                    let rect = CGRect(x: size * 0.23 - expansion, y: size * 0.79 - expansion * 0.12,
+                                      width: size * 0.54 + expansion * 2, height: size * 0.12 + expansion * 0.3)
+                    stroke(Path(ellipseIn: rect), opacity: index == 0 ? 0.55 : 0.24, width: 0.9)
+                }
+            case .swordArc:
+                let sweep = min(1, max(0, (t - 0.12) / 0.55))
+                var arc = Path()
+                arc.move(to: CGPoint(x: size * 0.08, y: size * 0.62))
+                arc.addQuadCurve(to: CGPoint(x: size * 0.91, y: size * 0.12), control: CGPoint(x: size * 0.16, y: -size * 0.22))
+                stroke(arc.trimmedPath(from: max(0, sweep - 0.5), to: max(0.01, sweep)), opacity: 0.9, width: size * 0.035)
+                dot(size * 0.82, size * 0.10, radius: size * 0.035)
+            case .softGlow:
+                dot(size * 0.18, size * 0.22, radius: size * 0.035)
+                dot(size * 0.82, size * 0.16, radius: size * 0.05, hollow: true)
+            }
+        }.frame(width: size, height: size).allowsHitTesting(false).accessibilityHidden(true)
     }
 }
 
@@ -813,7 +973,9 @@ private struct QuotaDuoGaugeContent: View, Animatable {
         case .stale: return "上次记录，已陈旧"
         case .resetDue: return "上次记录，重置待核对"
         case .missing: return "等待读取额度"
-        case .fresh: return layout.isKnown ? "已读取" : "Codex 未提供百分比"
+        case .fresh:
+            if layout.isKnown { return "已读取" }
+            return presentation.provider == .codex ? "Codex 未提供百分比" : "官网未提供百分比"
         }
     }
     private var renderer: QuotaRail {
@@ -859,20 +1021,20 @@ private struct QuotaDuoGaugeContent: View, Animatable {
                     Text(String(format: "%.0f%%", layout.progress))
                         .font(.system(size: layout.side * 0.20, weight: .semibold, design: .rounded))
                         .monospacedDigit()
-                        .accessibilityLabel("\(readingLabel)百分之\(Int(layout.progress.rounded()))")
-                    Text(readingLabel).font(.system(size: 8, weight: .medium)).foregroundStyle(.secondary)
+                        .accessibilityLabel(YuliangL10n.format("剩余百分之{0}", String(Int(layout.progress.rounded()))))
+                    Text(YuliangL10n.text(readingLabel)).font(.system(size: 8, weight: .medium)).foregroundStyle(.secondary)
                 }.foregroundStyle(QuotaPalette.ink)
                 animatedBuddy.position(x: layout.markerX, y: layout.markerY)
             } else {
                 VStack(spacing: 0) {
                     animatedBuddy
                     Text("—").font(.system(size: 13, weight: .medium)).foregroundStyle(.secondary)
-                        .accessibilityLabel("剩余额度未知")
+                        .accessibilityLabel(YuliangL10n.text("剩余额度未知"))
                 }
             }
         }
         .frame(width: layout.side, height: layout.side)
-        .help("\(presentation.window?.label ?? "订阅额度") · \(status)")
+        .help("\(YuliangL10n.text(presentation.window?.label ?? "订阅额度")) · \(YuliangL10n.text(status))")
         .accessibilityElement(children: .contain)
     }
 

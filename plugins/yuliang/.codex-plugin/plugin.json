@@ -1,0 +1,16 @@
+{
+  "name": "yuliang",
+  "version": "0.1.0-beta.1",
+  "description": "连接本机余量小组件，查看额度、Token 并与小伙伴互动。",
+  "requires_local_executor": true,
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "余量",
+    "shortDescription": "额度、Token 和可互动的小伙伴",
+    "category": "Productivity",
+    "capabilities": ["Read", "Write"],
+    "defaultPrompt": ["看看我的 AI 额度和 Token 用量", "显示余量小组件，让小伙伴鼓励我一下"],
+    "brandColor": "#AA96C5"
+  }
+}

@@ -1,0 +1,4 @@
+interface:
+  display_name: "余量"
+  short_description: "查看 AI 额度与 Token 用量，调整桌面小组件并与小伙伴互动"
+  default_prompt: "使用 $yuliang 查看我的额度和 Token 用量。"

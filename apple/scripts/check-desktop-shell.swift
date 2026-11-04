@@ -15,6 +15,7 @@ private struct ShellCheckFailure: Error, CustomStringConvertible {
 @main
 struct DesktopShellCheck {
     private static let expectedCardSize = NSSize(width: 344, height: 160)
+    private static let expectedCompactSize = NSSize(width: 280, height: 112)
     private static let expectedDuoSize = NSSize(width: 160, height: 160)
 
     @MainActor
@@ -278,7 +279,7 @@ struct DesktopShellCheck {
             model.now = Date()
             settle(0.3)
         }
-        for id in ["sources", "styles", "display", "appearance", "windows", "characters", "interactions"] {
+        for id in ["sources", "styles", "display", "appearance", "windows", "characters", "interactions", "language"] {
             _ = try settingsButton("nav." + id, in: panel)
         }
         try pressSetting("nav.styles", in: panel)
@@ -287,6 +288,25 @@ struct DesktopShellCheck {
         try require(cardChoice.state == (model.displayStyle == .card ? .on : .off)
                     && duoChoice.state == (model.displayStyle == .duo ? .on : .off),
                     "style settings lost their selected state")
+        try pressSetting("back", in: panel)
+        try pressSetting("nav.language", in: panel)
+        let languageBefore = model.language
+        for language in [YuliangLanguage.en, .ja, .zhHans] {
+            try pressSetting("language." + language.rawValue, in: panel)
+            try require(model.language == language && YuliangL10n.language == language,
+                        "language option failed to update the shared current locale")
+            try require(StandaloneSettingsPresenter.shellTestPanel === panel && isOnScreen(panel),
+                        "switching language replaced or closed the stable settings panel")
+            _ = try settingsButton("language." + language.rawValue, in: panel)
+            let expectedTitle = YuliangL10n.text("语言")
+            let title = descendant(panel.contentView!, identifier: "yuliang.settings.pageTitle") as? NSTextField
+            try require(title?.stringValue == expectedTitle, "settings title did not update to the selected language")
+            if capturePages, let content = panel.contentView {
+                try render(content, named: "native-language-\(language.rawValue).png")
+            }
+        }
+        model.language = languageBefore
+        settle(0.2)
         try pressSetting("back", in: panel)
         try pressSetting("nav.display", in: panel)
         let dailyChoice = try settingsButton("display.dailyTokens", in: panel)
@@ -379,6 +399,13 @@ struct DesktopShellCheck {
         context.rightMouseDown(with: rightClick)
         settle(0.2)
         let contextualActions = try settingsPanel()
+        let signature = try settingsButton("interaction.signature", in: contextualActions)
+        try require(signature.title == YuliangL10n.text(model.document.preferences.character.signatureLabel),
+                    "character right-click lost its own signature entry")
+        try pressSetting("interaction.signature", in: contextualActions)
+        try require(model.buddyActivity?.action == model.document.preferences.character.signatureAction,
+                    "character right-click did not dispatch its signature action")
+        model.buddyActivity = nil
         for action in BuddyAction.interactiveActions {
             _ = try settingsButton("interaction." + action.rawValue, in: contextualActions)
         }
@@ -484,10 +511,14 @@ struct DesktopShellCheck {
                 try require(presentation.provider == .claude && presentation.remainingPercent == 72
                             && model.windows.contains(where: { $0.id == "weekly" && $0.remainingPercent == 39 }),
                             "Claude card did not receive its own synthetic windows")
+                // Source transitions take 0.24s, while pressSetting intentionally
+                // exercises rapid consecutive choices with only a 0.15s wait.
+                // Compare settled information, not two different animation frames.
+                settle(0.35)
                 let enabled = try render(content, named: "native-claude-card-token-settings-on.png")
                 model.showDailyTokens = false
                 model.showLifetimeTokens = false
-                settle(0.2)
+                settle(0.35)
                 let disabled = try render(content, named: "native-claude-card-token-settings-off.png")
                 try require(pixelDifference(enabled, disabled) < 0.001,
                             "Codex Token switches altered the actual Claude rendering")
@@ -523,12 +554,12 @@ struct DesktopShellCheck {
         model.buddyActivity = nil
         model.displayStyle = .duo
         model.appearance = .dark
-        settle(0.35)
+        settle(0.5)
         try require(desktop.frame.size == expectedDuoSize, "Claude Duo changed its fixed size")
         let duoEnabled = try render(content, named: "native-claude-duo-dark.png")
         model.showDailyTokens = false
         model.showLifetimeTokens = false
-        settle(0.2)
+        settle(0.35)
         let duoDisabled = try render(content, named: "native-claude-duo-token-settings-off.png")
         try require(pixelDifference(duoEnabled, duoDisabled) < 0.001,
                     "Codex Token switches altered the actual Claude Duo rendering")
@@ -586,6 +617,10 @@ struct DesktopShellCheck {
         let panel = try openSettings(on: desktop)
         try pressSetting("nav.appearance", in: panel)
         try pressSetting("appearance.light", in: panel)
+        guard let lightVeil = descendant(content, identifier: "yuliang.widget.lightVeil") else {
+            throw ShellCheckFailure(description: "light desktop is missing its snow-white material overlay")
+        }
+        try require(!lightVeil.isHidden, "light appearance did not show its white surface")
         for choice in StandaloneWidgetColorStyle.allCases {
             _ = try settingsButton("widgetColor." + choice.rawValue, in: panel)
         }
@@ -614,6 +649,8 @@ struct DesktopShellCheck {
                         "a foreground/color transition changed quota, Token readings or their successful observation times")
             try require(StandaloneSettingsPresenter.shellTestPanel === panel && isOnScreen(panel),
                         "a foreground/color transition dismissed the continuously open appearance panel")
+            try require(!lightVeil.isHidden,
+                        "a foreground or monochrome change made light appearance lose its white surface")
             // This native cache documents material/geometry only. cacheDisplay
             // bypasses SwiftUI compositor color filters; ImageRenderer also
             // cannot render this NSViewRepresentable tree. Full-color versus
@@ -646,7 +683,10 @@ struct DesktopShellCheck {
         try requireIndependentGroups(color: .automatic, theme: .light)
         try pressSetting("appearance.dark", in: panel)
         try requireIndependentGroups(color: .automatic, theme: .dark)
+        try require(lightVeil.isHidden, "dark appearance retained the light-only white overlay")
+        try render(content, named: "native-widget-material-dark.png")
         try pressSetting("appearance.light", in: panel)
+        try require(!lightVeil.isHidden, "returning to light appearance did not restore its white surface")
         try requireIndependentGroups(color: .automatic, theme: .light)
         try require(!model.collector.isRunning && model.collector.lastAttemptAt == nil
                     && !model.claudeCollector.isRunning && model.claudeCollector.lastAttemptAt == nil,
@@ -690,30 +730,34 @@ struct DesktopShellCheck {
 
     @MainActor
     private static func renderNewInteractionStages(now: Date, preferences: QuotaPreferences) throws {
-        let examples: [(BuddyAction, QuotaCharacter, TimeInterval)] = [
-            (.nuzzle, .dragonGirl, 0.9), (.sip, .claudeGirl, 1.1), (.stretch, .myMelody, 0.8)
-        ]
+        let signatures = QuotaCharacter.builtInCharacters.map { character in
+            (character.signatureAction, character, character.signatureAction.duration * 0.45)
+        }
+        let examples = signatures + [(.eating, QuotaCharacter.nailong, 1.35), (.eating, .swordCat, 1.35)]
         for dark in [false, true] {
             let host = NSHostingView(rootView: VStack(alignment: .leading, spacing: 12) {
                 Text("合成互动预览 · 固定阶段")
                     .font(.system(size: 13, weight: .semibold))
-                ForEach(examples.indices, id: \.self) { index in
-                    let (action, character, elapsed) = examples[index]
-                    let activity = BuddyActivity(action: action, startedAt: now, source: .play)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("\(character.name) · \(action.label) · \(String(format: "%.1f", elapsed))s")
-                            .font(.system(size: 10)).foregroundStyle(.secondary)
-                        QuotaRail(remainingPercent: 68, character: character, frame: 3,
-                                  accent: QuotaPalette.accent(for: character), size: 36,
-                                  activity: activity, activityPreviewElapsed: elapsed,
-                                  onAction: { _ in }, trackHeight: 14)
-                            .frame(height: 42)
-                        Text(activity.caption).font(.system(size: 10)).foregroundStyle(.secondary)
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 12) {
+                    ForEach(examples.indices, id: \.self) { index in
+                        let (action, character, elapsed) = examples[index]
+                        let activity = BuddyActivity(action: action, startedAt: now, source: .play)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("\(character.name) · \(action == character.signatureAction ? character.signatureLabel : action.label)")
+                                .font(.system(size: 10)).foregroundStyle(.secondary)
+                            QuotaRail(remainingPercent: 68, character: character, frame: 3,
+                                      accent: QuotaPalette.accent(for: character), size: 36,
+                                      activity: activity, activityPreviewElapsed: elapsed,
+                                      onAction: { _ in }, trackHeight: 14)
+                                .frame(height: 50)
+                            Text(action == character.signatureAction ? character.signatureCaption() : activity.caption)
+                                .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(2)
+                        }.frame(height: 100, alignment: .topLeading)
                     }
                 }
-            }.padding(16).frame(width: expectedCardSize.width).background(QuotaPalette.surface)
+            }.padding(16).frame(width: 640).background(QuotaPalette.surface)
                 .environment(\.colorScheme, dark ? .dark : .light))
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: expectedCardSize.width, height: 320),
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 600),
                                   styleMask: [.borderless], backing: .buffered, defer: false)
             window.isReleasedWhenClosed = false
             window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
@@ -721,21 +765,61 @@ struct DesktopShellCheck {
             window.setContentSize(host.fittingSize)
             window.center()
             window.orderFrontRegardless()
-            defer { window.close() }
             settle(0.1)
             try require(isOnScreen(window), "fixed-elapsed synthetic interaction stages were not rendered on screen")
             try render(host, named: "native-new-interactions-\(dark ? "dark" : "light").png")
+            window.close()
         }
+    }
+
+    @MainActor
+    private static func renderLocalizedLayouts(model: StandaloneModel, shell: StandaloneAppDelegate) throws {
+        let language = model.language
+        let compact = model.compact
+        let appearance = model.appearance
+        let colors = model.widgetColorStyle
+        let records = model.document.records
+        defer {
+            model.language = language
+            model.compact = compact
+            model.appearance = appearance
+            model.widgetColorStyle = colors
+            settle(0.25)
+            shell.shellTestResize()
+        }
+        model.widgetColorStyle = .fullColor
+        for selectedLanguage in [YuliangLanguage.zhHans, .en, .ja] {
+            model.language = selectedLanguage
+            for dark in [false, true] {
+                model.appearance = dark ? .dark : .light
+                for isCompact in [false, true] {
+                    model.compact = isCompact
+                    settle(0.55)
+                    shell.shellTestResize()
+                    let panel = shell.shellTestPanel
+                    try require(panel.frame.size == (isCompact ? expectedCompactSize : expectedCardSize),
+                                "localized layout changed its documented footprint")
+                    if let content = panel.contentView {
+                        try render(content, named: "native-\(isCompact ? "compact" : "standard")-\(selectedLanguage.rawValue)-\(dark ? "dark" : "light").png")
+                    }
+                }
+            }
+        }
+        try require(model.document.records == records && !model.collector.isRunning && !model.claudeCollector.isRunning,
+                    "language or layout previews altered account records or started a collector")
     }
 
     @MainActor
     private static func runChecks() throws {
         try checkDuoGeometry()
         for compact in [true, false] {
-            try require(StandaloneLayout.cardWidth(compact: compact) == expectedCardSize.width
-                        && StandaloneLayout.desktopWidth(style: .card, compact: compact) == expectedCardSize.width
+            let expected = compact ? expectedCompactSize : expectedCardSize
+            try require(StandaloneLayout.cardWidth(compact: compact) == expected.width
+                        && StandaloneLayout.cardHeight(compact: compact) == expected.height
+                        && StandaloneLayout.desktopWidth(style: .card, compact: compact) == expected.width
+                        && StandaloneLayout.desktopHeight(style: .card, compact: compact) == expected.height
                         && StandaloneLayout.desktopWidth(style: .duo, compact: compact) == expectedDuoSize.width,
-                        "card/Duo layout no longer uses the fixed widget width for both density preferences")
+                        "standard/compact/Duo footprints do not follow their distinct designed sizes")
         }
         try require(StandaloneLayout.minimumHeight(style: .card) == expectedCardSize.height
                     && StandaloneLayout.minimumHeight(style: .duo) == expectedDuoSize.height,
@@ -748,10 +832,11 @@ struct DesktopShellCheck {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("yuliang-desktop-shell-check-\(UUID().uuidString)", isDirectory: true)
         let model = StandaloneModel(store: StandaloneQuotaStore(directory: directory))
+        model.language = .zhHans
         try require(model.showDailyTokens && model.showLifetimeTokens, "both Token counters should be enabled by default")
         try require(model.displayStyle == .card, "existing installations should start in the familiar card style")
-        try require(model.availableCharacters.count == 9 && Set(model.availableCharacters).count == 9,
-                    "the public build should expose nine distinct selectable characters")
+        try require(model.availableCharacters.count == 7 && Set(model.availableCharacters).count == 7,
+                    "the public build should expose seven distinct selectable characters")
         let syntheticTime = Date()
         let syntheticQuota = SnapshotEnvelope(providerId: .codex, pageKind: "rate-limits", observedAt: syntheticTime,
             source: "codex-app-server", windows: [
@@ -1111,8 +1196,23 @@ struct DesktopShellCheck {
         model.compact = true
         settle()
         shell.shellTestResize()
-        try require(panel.frame.size == expectedCardSize && abs(panel.frame.height - compactHeight) <= 1,
-                    "restoring compact density resized the fixed medium-widget surface")
+        try require(panel.frame.size == expectedCompactSize && panel.frame.height < compactHeight * 0.75,
+                    "compact mode did not materially reduce the actual native footprint")
+        if let content = panel.contentView { try render(content, named: "native-main-compact-280x112.png") }
+        let compactOrigin = panel.frame
+        model.showDailyTokens = false
+        model.showLifetimeTokens = false
+        settle(0.2)
+        try require(panel.frame.size == expectedCompactSize && panel.frame.origin == compactOrigin.origin,
+                    "compact Token visibility changes resized or moved the widget")
+        model.showDailyTokens = true
+        model.showLifetimeTokens = true
+        model.compact = false
+        settle(0.2)
+        shell.shellTestResize()
+        try require(panel.frame.size == expectedCardSize && abs(panel.frame.maxY - compactOrigin.maxY) < 1,
+                    "restoring standard size did not preserve the widget's top edge")
+        try renderLocalizedLayouts(model: model, shell: shell)
 
         model.pinned = false
         settle()

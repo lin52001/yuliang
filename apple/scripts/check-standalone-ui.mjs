@@ -1,7 +1,7 @@
 // Reproducible native UI/model checks. All snapshots and storage are synthetic.
 // The desktop-shell harness briefly opens only its own windows and status item.
 import { spawn } from 'node:child_process';
-import { copyFile, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -53,13 +53,23 @@ try {
     'MacStandalone/QuotaWebCollector.swift',
     'MacStandalone/ClaudeConnectionView.swift',
     'MacStandalone/StandaloneQuotaStore.swift',
+    'MacStandalone/StandalonePluginBridge.swift',
     'MacStandalone/YuliangStandaloneApp.swift',
     'MacStandalone/StandaloneDesktopShell.swift',
   ];
+  const visualResources = ['original-buddies-v1.png', 'provider-codex.png'];
+  // Verify the same optional-artwork path as the public build. Missing artwork
+  // uses the app's explicit vector fallback, while required resources still fail.
+  try {
+    await stat(path.join(apple, 'Resources/new-buddies-v017.png'));
+    visualResources.push('new-buddies-v017.png');
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
   const harnesses = ['scripts/check-standalone-interactions.swift', 'scripts/check-desktop-shell.swift'];
   // Compile a single frozen source snapshot, so a concurrent edit cannot change
   // an input partway through the two native checks.
-  const sources = [...core, ...standalone, ...harnesses];
+  const sources = [...core, ...standalone, ...harnesses, ...visualResources.map(name => `Resources/${name}`)];
   const directories = [...new Set(sources.map(name => path.dirname(path.join(frozen, name))))];
   await Promise.all(directories.map(directory => mkdir(directory, { recursive: true })));
   await Promise.all(sources.map(name => copyFile(path.join(apple, name), path.join(frozen, name))));
@@ -82,7 +92,8 @@ try {
     mkdir(path.join(desktopContents, 'MacOS'), { recursive: true }),
     mkdir(path.join(desktopContents, 'Resources'), { recursive: true }),
   ]);
-  await copyFile(path.join(apple, 'Resources/original-buddies-v1.png'), path.join(desktopContents, 'Resources/original-buddies-v1.png'));
+  await Promise.all(visualResources.map(name =>
+    copyFile(path.join(frozen, 'Resources', name), path.join(desktopContents, 'Resources', name))));
   await writeFile(path.join(desktopContents, 'Info.plist'), '<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>CFBundleExecutable</key><string>check-desktop-shell</string><key>CFBundleIdentifier</key><string>com.yuliang.quota.uitest</string><key>CFBundlePackageType</key><string>APPL</string></dict></plist>');
   const desktop = path.join(desktopContents, 'MacOS/check-desktop-shell');
   await run('xcrun', [...linked, ...standalone, harnesses[1], '-o', desktop]);

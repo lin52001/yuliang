@@ -166,4 +166,22 @@ struct BuddyFeedbackTests {
         #expect(!empty && !idle && !invalid)
         #expect(state == original)
     }
+
+    @Test func characterSignaturesHaveTheirOwnResponsesAndStillYieldToErrors() {
+        var responses = Set<String>()
+        for character in QuotaCharacter.builtInCharacters {
+            var state = BuddyFeedbackState()
+            state.interact(character.signatureAction, now: now, character: character)
+            let message = state.message(at: now, refreshTimeLabel: "", character: character)
+            #expect(message.kind == .interaction)
+            #expect(message.symbol == character.signatureSymbol)
+            #expect(message.text == character.signatureCaption(variant: 1))
+            responses.insert(message.text)
+            let resting = state.message(at: now.addingTimeInterval(6), refreshTimeLabel: "", character: character)
+            #expect(resting.kind == .encouragement)
+            #expect(resting.text == character.signatureCaption(variant: 1))
+            #expect(state.message(at: now, refreshTimeLabel: "", error: "读取失败", character: character).text == "读取失败")
+        }
+        #expect(responses.count == QuotaCharacter.builtInCharacters.count)
+    }
 }

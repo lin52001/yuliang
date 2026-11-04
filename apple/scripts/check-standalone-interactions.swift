@@ -241,8 +241,8 @@ struct StandaloneInteractionVerification {
             try rig.accept(rig.snapshot(80))
             let records = rig.model.document.records
             let expected: Set<QuotaCharacter> = [.dragonGirl, .claudeGirl, .deepseekGirl, .geminiGirl,
-                .mochiCat, .butterBunny, .mintFox, .sesameBear, .cloudSprite]
-            try expect(Set(rig.model.availableCharacters) == expected, "公开版应包含九个内置伙伴，不能依赖私有旧图集")
+                .cloudSprite, .nailong, .swordCat]
+            try expect(Set(rig.model.availableCharacters) == expected, "公开版应包含七个可选伙伴，不能依赖私有旧图集")
             for character in QuotaCharacter.builtInCharacters {
                 rig.model.selectCharacter(character)
                 try expect(rig.model.document.preferences.character == character, "选择角色应直接命中所选伙伴")
@@ -259,9 +259,13 @@ struct StandaloneInteractionVerification {
                 visited.insert(rig.model.document.preferences.character)
             }
             try expect(rig.model.document.preferences.character == start && visited == expected,
-                       "循环切换必须经过九个伙伴并回到起点")
+                       "循环切换必须经过七个伙伴并回到起点")
             rig.model.selectCharacter(.kuromi)
             try expect(rig.model.document.preferences.character == start, "缺少私有资源的旧角色不能被选中")
+            for removed in [QuotaCharacter.mochiCat, .butterBunny, .mintFox, .sesameBear] {
+                rig.model.selectCharacter(removed)
+                try expect(rig.model.document.preferences.character == start, "移出的伙伴不可重新选中")
+            }
             try expect(rig.model.document.records == records, "完整角色循环不改变真实额度")
         }
 
@@ -552,12 +556,12 @@ struct StandaloneInteractionVerification {
                     previousID = activity.id
                 }
             }
-            try expect((2...4).contains(moments.count), "五分钟内只应出现少量低频自主活动")
-            try expect(moments.first.map { (35...60).contains($0.second) } == true,
-                       "初次自主活动应安静等待35至60秒")
+            try expect((8...11).contains(moments.count), "五分钟内自主活动应维持大约每30秒一次")
+            try expect(moments.first.map { (26...34).contains($0.second) } == true,
+                       "初次自主活动应安静等待26至34秒")
             for index in 1..<moments.count {
-                try expect((70...130).contains(moments[index].second - moments[index - 1].second),
-                           "后续自主活动应间隔70至130秒")
+                try expect((26...34).contains(moments[index].second - moments[index - 1].second),
+                           "后续自主活动应间隔约30秒")
                 try expect(moments[index].action != moments[index - 1].action,
                            "连续自主活动不应重复同一动作")
             }
@@ -596,8 +600,8 @@ struct StandaloneInteractionVerification {
                 }
                 // Settings are busy rather than paused, so their next act waits
                 // at least 12 seconds after the last busy tick. Other surfaces
-                // restart the complete 35-second quiet interval.
-                let quietEnd = mode == "settings" ? 191 : 214
+                // restart a complete 26–34-second quiet interval.
+                let quietEnd = mode == "settings" ? 191 : 205
                 for second in 181...quietEnd {
                     rig.model.advanceClock(to: start.addingTimeInterval(Double(second)))
                     try expect(rig.model.buddyActivity == nil, "\(mode)恢复后应先安静等待，不补播积压活动")
@@ -632,10 +636,10 @@ struct StandaloneInteractionVerification {
             try expect(rig.model.buddyActivity?.source == .play && rig.model.buddyActivity?.action == .nuzzle
                        && response.kind == .interaction,
                        "手动撒娇应立即替换自主动作与文案")
-            for second in 1...69 {
+            for second in 1...25 {
                 rig.model.advanceClock(to: playStart.addingTimeInterval(Double(second)))
                 try expect(rig.model.buddyActivity?.source != .companion,
-                           "手动互动后的70秒冷却内不得插入自主活动")
+                           "手动互动后的最短26秒冷却内不得插入自主活动")
                 if second <= 2 {
                     try expect(rig.model.buddyActivity?.id == playID && rig.model.feedbackMessage == response,
                                "手动动作与阅读时间应得到优先保留")
@@ -652,7 +656,7 @@ struct StandaloneInteractionVerification {
         }
 
         // 23. Continuous real usage at the collector's 60-second cadence must
-        // not starve autonomous company by restarting a 70–130-second delay.
+        // not starve autonomous company by restarting its roughly 30-second delay.
         // Inject the same past clock into reception and ticking so this catches
         // the old starvation behavior without sleeps or rewriting activities.
         do {
@@ -699,7 +703,7 @@ struct StandaloneInteractionVerification {
                 try expect(rig.model.document.records == expectedRecords,
                            "消费间隙的时钟与自主互动不能新增额度消耗或更新时间")
             }
-            try expect(meals == 10 && (3...8).contains(afterUsageMoments),
+            try expect(meals == 10 && (8...20).contains(afterUsageMoments),
                        "连续每60秒消费时，仍应偶尔自主活动，不能永远只吃饼干")
             try expect(rig.value.remainingPercent == 85, "连续真实下降应仅把95%更新为85%")
             let persisted = try rig.model.store.read().records
