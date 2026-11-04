@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>余量采集测试页 · 合成数据</title>
+  <style>
+    :root { color-scheme: light; font-family: -apple-system, BlinkMacSystemFont, sans-serif; color: #27232f; background: #f7f7f9; }
+    body { max-width: 620px; margin: 40px auto; padding: 0 24px; }
+    aside, main { background: white; border: 1px solid #e7e5ec; border-radius: 16px; padding: 20px; margin-bottom: 16px; }
+    aside { color: #655e70; font-size: 13px; line-height: 1.6; }
+    h1 { font-size: 22px; } h2 { margin-top: 24px; font-size: 17px; } h3 { font-size: 14px; }
+    p { margin: 8px 0; } output { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+    label { display: block; margin: 16px 0; } input, button { font: inherit; padding: 8px; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <aside aria-label="Fixture description">
+    <strong>隔离采集测试页，全部为合成字段。</strong>
+    <p>不登录、不请求网络、不读取 Cookie、浏览器存储或用户数据。</p>
+    <p>Mode: <output id="fixture-mode"></output><br>Document nonce: <output id="fixture-document-nonce"></output></p>
+  </aside>
+  <main id="usage-root" aria-label="Usage fixture"></main>
+  <div data-message-author-role="user" hidden>TEST_CHAT_SENTINEL_NEVER_CAPTURE</div>
+  <script>
+    'use strict';
+    // This fixture never participates in production collection. A test harness
+    // must explicitly provide the canonical Claude parser URL after loading it.
+    // The production parser's origin/path allow-list must remain unchanged.
+    const query = new URLSearchParams(location.search);
+    const allowedModes = new Set(['valid', 'remaining', 'unknown', 'login', 'challenge', 'empty', 'malformed', 'sessionOnly', 'weeklyOnly', 'resetDue']);
+    const mode = allowedModes.has(query.get('mode')) ? query.get('mode') : 'valid';
+    const root = document.querySelector('main');
+    document.documentElement.dataset.fixtureMode = mode;
+    document.documentElement.dataset.fixtureDocumentNonce = String(Date.now()) + '-' + Math.random().toString(36).slice(2);
+    document.querySelector('#fixture-mode').textContent = mode;
+    document.querySelector('#fixture-document-nonce').textContent = document.documentElement.dataset.fixtureDocumentNonce;
+
+    function percentage(name, fallback) {
+      const raw = query.get(name);
+      if (raw === null) return fallback;
+      const value = Number(raw);
+      return Number.isFinite(value) && value >= 0 && value <= 100 ? value : fallback;
+    }
+    function node(tag, text, parent = root) {
+      const element = document.createElement(tag);
+      element.textContent = text;
+      parent.append(element);
+      return element;
+    }
+    function section(heading, used, reset) {
+      node('h2', heading);
+      if (mode === 'malformed') node('p', '135% used');
+      else if (mode === 'remaining') node('p', String(100 - used) + '% remaining');
+      else if (mode !== 'unknown') node('p', String(used) + '% used');
+      node('p', reset);
+    }
+    if (mode === 'login') {
+      document.title = 'Sign in · Synthetic login fixture';
+      node('h1', 'Sign in to Claude');
+      node('p', 'Synthetic login fixture. Do not enter real credentials.');
+      const label = node('label', 'Email');
+      const input = document.createElement('input');
+      input.type = 'email'; input.autocomplete = 'off'; input.placeholder = 'fixture@example.invalid';
+      label.append(input);
+      const passwordLabel = node('label', 'Synthetic password field');
+      const password = document.createElement('input');
+      password.type = 'password'; password.autocomplete = 'off'; password.placeholder = 'Do not enter real credentials';
+      passwordLabel.append(password);
+      node('button', 'Continue').type = 'button';
+    } else if (mode === 'challenge') {
+      document.title = 'Just a moment · Synthetic challenge fixture';
+      const challenge = node('div', 'Verify you are human. Synthetic CAPTCHA fixture, no challenge service is loaded.');
+      challenge.setAttribute('role', 'alert');
+      challenge.id = 'challenge-running';
+    } else if (mode === 'empty') {
+      node('h1', 'Usage');
+      node('p', 'Usage fields are unavailable in this synthetic response.');
+    } else {
+      node('h1', 'Usage');
+      const reset = mode === 'resetDue' ? 'Resets at ' + new Date(Date.now() - 60_000).toISOString() : 'Resets in 1 hour';
+      if (mode !== 'weeklyOnly') section('Current session', percentage('used', 35), reset);
+      if (mode !== 'sessionOnly') {
+        node('h2', 'Weekly limits');
+        section('All models', percentage('weekly', 60), 'Resets in 2 days');
+        section('Sonnet only', percentage('sonnet', 12), 'Resets in 3 days');
+      }
+      // If the caller uses main.innerText, these hidden fields cannot conflict
+      // with the visible session value or leak into the native record.
+      const hidden = node('section', 'Current session\n99% used\nResets in 9 hours');
+      hidden.hidden = true;
+    }
+  </script>
+</body>
+</html>

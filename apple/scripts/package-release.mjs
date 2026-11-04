@@ -48,13 +48,16 @@ async function inspectBundle(directory) {
   }
 }
 await inspectBundle(app);
-for (const name of ['original-buddies-v1.png', 'LICENSE.txt', 'ASSETS.md']) {
+for (const name of ['original-buddies-v1.png', 'LICENSE.txt', 'ASSETS.md', 'parser.js']) {
   const resource = path.join(app, 'Contents/Resources', name);
   const attributes = await lstat(resource);
   if (!attributes.isFile() || attributes.isSymbolicLink() || attributes.size === 0) {
     throw new Error(`发行应用缺少完整资源或许可说明：${name}。请从干净公开源码重新构建。`);
   }
 }
+const bundledParser = await readFile(path.join(app, 'Contents/Resources/parser.js'));
+const sourceParser = await readFile(path.join(root, 'extension/parser.js'));
+if (!bundledParser.equals(sourceParser)) throw new Error('Claude 解析器与当前源码不一致，请重新构建后打包。');
 const executable = run('plutil', ['-extract', 'CFBundleExecutable', 'raw', '-o', '-', info], true);
 if (!/^[A-Za-z0-9_-]+$/.test(executable)) throw new Error('应用可执行文件名无效。');
 const architectures = run('lipo', ['-archs', path.join(app, 'Contents/MacOS', executable)], true).split(/\s+/).sort();

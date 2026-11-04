@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Synthetic OAuth popup fixture</title>
+<body>
+  <main>
+    <h1>Isolated popup regression. No real account.</h1>
+    <button id="fixture-open" type="button">Open synthetic sign-in window</button>
+    <button id="fixture-complete" type="button">Complete synthetic sign-in</button>
+    <output id="fixture-result"></output>
+  </main>
+  <script>
+    'use strict';
+    let loginWindow = null;
+    const popup = location.pathname === '/oauth/popup';
+    document.querySelector('#fixture-open').hidden = popup;
+    document.querySelector('#fixture-complete').hidden = !popup;
+    document.querySelector('#fixture-open').onclick = () => {
+      loginWindow = window.open('/oauth/popup', 'fixture-auth', 'width=680,height=720');
+      document.querySelector('#fixture-result').textContent = loginWindow ? 'opened' : 'blocked';
+    };
+    document.querySelector('#fixture-complete').onclick = () => {
+      if (!window.opener) throw new Error('Synthetic OAuth lost its opener');
+      window.opener.postMessage({ type: 'fixture-auth-complete' }, location.origin);
+      window.close();
+    };
+    window.addEventListener('message', event => {
+      if (event.origin !== location.origin || event.source !== loginWindow || event.data?.type !== 'fixture-auth-complete') return;
+      // No cookie, token, credential or external service participates here.
+      location.assign('/usage');
+    });
+  </script>
+</body>
+</html>

@@ -28,7 +28,9 @@ private final class InteractionRig {
         base = Date().addingTimeInterval(-180)
         reset = Date().addingTimeInterval(3_600)
         model = StandaloneModel(store: store)
-        try expect(!model.collector.isRunning && !model.collector.isBusy, "隔离模型不得启动采集")
+        try expect(!model.collector.isRunning && !model.collector.isBusy
+                   && !model.claudeCollector.isRunning && !model.claudeCollector.isBusy,
+                   "隔离模型不得启动任何平台的采集")
     }
 
     func snapshot(_ remaining: Double?, seconds: TimeInterval = 0, reset: Date? = nil,
@@ -43,12 +45,32 @@ private final class InteractionRig {
             ], id: "interaction-fixture")
     }
 
-    func accept(_ snapshot: SnapshotEnvelope) throws {
-        guard let callback = model.collector.onSnapshot else {
-            throw InteractionVerificationFailure(description: "模型未连接快照回调")
+    func claudeSnapshot(_ remaining: Double?, seconds: TimeInterval = 0,
+                        reset: Date? = nil, weekly: Double? = 50) -> SnapshotEnvelope {
+        let observed = base.addingTimeInterval(seconds)
+        return SnapshotEnvelope(providerId: .claude, pageKind: "usage", observedAt: observed,
+            source: "browser", windows: [
+                QuotaWindow(id: "session", label: "当前会话", usedPercent: remaining.map { 100 - $0 },
+                            resetAt: reset ?? self.reset, observedAt: observed),
+                QuotaWindow(id: "weekly", label: "每周全部模型", usedPercent: weekly.map { 100 - $0 },
+                            resetAt: reset ?? self.reset, observedAt: observed)
+            ], id: "claude-interaction-fixture")
+    }
+
+    func accept(_ snapshot: SnapshotEnvelope, now: Date? = nil) throws {
+        if let now {
+            try model.shellTestReceiveSnapshot(snapshot, now: now)
+        } else {
+            let callback = snapshot.providerId == .claude
+                ? model.claudeCollector.onSnapshot : model.collector.onSnapshot
+            guard let callback else {
+                throw InteractionVerificationFailure(description: "模型未连接快照回调")
+            }
+            try callback(snapshot)
         }
-        try callback(snapshot)
-        try expect(!model.collector.isRunning && !model.collector.isBusy, "合成回调不得启动真实采集")
+        try expect(!model.collector.isRunning && !model.collector.isBusy
+                   && !model.claudeCollector.isRunning && !model.claudeCollector.isBusy,
+                   "合成回调不得启动任一平台的真实采集")
     }
 
     var value: QuotaPresentation { QuotaPresentation(document: model.document) }
@@ -65,7 +87,7 @@ struct StandaloneInteractionVerification {
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
             defer { try? FileManager.default.removeItem(at: root) }
             try run(directory: root)
-            print("Standalone互动隔离验证通过：16组。仅使用合成额度和临时存储，未启动Codex采集或读取认证。")
+            print("Standalone互动隔离验证通过：23组。仅使用合成额度和临时存储，未启动平台采集或读取认证。")
         } catch {
             fputs("Standalone互动隔离验证失败：\(error)\n", stderr)
             exit(1)
@@ -419,6 +441,269 @@ struct StandaloneInteractionVerification {
             rig.model.collector.shellTestReceiveQuota(valid, observedAt: rig.base.addingTimeInterval(5))
             try expect(rig.model.collector.quotaError == nil && !rig.model.collector.isRunning && !rig.model.collector.isBusy,
                        "恢复成功应清除额度错误，所有验证仍不得启动真实采集")
+        }
+
+        // 17. Selecting an unconnected Claude account cannot borrow a Codex
+        // quota, error or token claim, and the provider choice survives restart.
+        do {
+            let rig = try InteractionRig(parent: directory, name: "provider-empty-isolation")
+            try rig.accept(rig.snapshot(80))
+            let tokens = try TokenUsageSnapshot.decode(Data("{\"summary\":{\"lifetimeTokens\":12345},\"dailyUsageBuckets\":[{\"startDate\":\"2026-11-04\",\"tokens\":321}]}".utf8),
+                                                       observedAt: rig.base)
+            rig.model.collector.shellTestSetTokenUsage(tokens)
+            rig.model.collector.shellTestReceiveQuota(nil, observedAt: rig.base.addingTimeInterval(1))
+            try expect(rig.model.collector.quotaError != nil && rig.model.collector.tokenUsage != nil,
+                       "空状态隔离检查必须先建立独立的Codex错误与Token记录")
+            let records = rig.model.document.records
+            rig.model.selectProvider(.claude)
+            try expect(rig.value.provider == .claude && rig.value.remainingPercent == nil && rig.value.window == nil,
+                       "未连接Claude应保留未知额度，不能复用Codex窗口")
+            try expect(rig.model.selectedQuotaError == nil && !rig.model.selectedBusy,
+                       "Claude选择状态不得继承Codex采集错误或忙碌状态")
+            let emptyMessage = rig.model.feedbackMessage.text
+            try expect(emptyMessage.contains("Claude") && !emptyMessage.contains("Codex")
+                       && !emptyMessage.localizedCaseInsensitiveContains("token"),
+                       "Claude空状态应只引导连接Claude，不泄露Codex用量或错误提示")
+            try expect(rig.model.buddyActivity == nil && rig.model.document.records == records,
+                       "切换平台不能制造互动或改写真实记录")
+            let restored = StandaloneModel(store: rig.model.store)
+            try expect(restored.document.preferences.providerId == .claude
+                       && QuotaPresentation(document: restored.document).remainingPercent == nil,
+                       "重新创建模型应恢复Claude选择与未知额度")
+            rig.model.selectProvider(.chatgpt)
+            try expect(rig.value.provider == .claude, "未接入的平台不能成为可读额度来源")
+            try expect(!restored.collector.isRunning && !restored.claudeCollector.isRunning,
+                       "恢复Claude选择不得自行发起采集")
+        }
+
+        // 18. Background Codex records remain durable while Claude is selected;
+        // only an actual decrease in the selected Claude cycle starts a meal.
+        do {
+            let rig = try InteractionRig(parent: directory, name: "claude-selected-background-codex")
+            try rig.accept(rig.snapshot(80))
+            rig.model.selectProvider(.claude)
+            try rig.accept(rig.claudeSnapshot(65))
+            try expect(rig.value.remainingPercent == 65 && rig.model.buddyActivity == nil,
+                       "Claude首次真实额度建立基线，不能追补一次进食")
+            rig.model.play(.nuzzle)
+            let activity = rig.model.buddyActivity?.id
+            let feedback = rig.model.buddyFeedback
+            try rig.accept(rig.snapshot(60, seconds: 60))
+            try expect(rig.value.provider == .claude && rig.value.remainingPercent == 65,
+                       "后台Codex下降不能移动前台Claude进度")
+            try expect(rig.model.buddyActivity?.id == activity && rig.model.buddyFeedback == feedback,
+                       "后台平台更新不得打断前台互动或闪更新时间")
+            try rig.accept(rig.claudeSnapshot(64, seconds: 1))
+            try expect(rig.value.remainingPercent == 64 && rig.model.buddyActivity?.source == .usage
+                       && rig.model.buddyActivity?.action == .eating
+                       && rig.model.buddyActivity?.consumedPercent == 1,
+                       "Claude同周期已确认下降应通过真实回调喂一块饼干")
+            rig.model.selectProvider(.codex)
+            try expect(rig.value.remainingPercent == 60 && rig.model.buddyActivity == nil,
+                       "后台Codex记录应保存，切回时只显示基线而不补播消耗")
+        }
+
+        // 19. The reverse direction is isolated too, including an independent
+        // Claude reset cycle, and switching never replays a timestamp flash.
+        do {
+            let rig = try InteractionRig(parent: directory, name: "codex-selected-background-claude")
+            try rig.accept(rig.snapshot(80))
+            try rig.accept(rig.claudeSnapshot(85))
+            rig.model.play(.wave)
+            let activity = rig.model.buddyActivity?.id
+            let feedback = rig.model.buddyFeedback
+            try rig.accept(rig.claudeSnapshot(84, seconds: 1))
+            try expect(rig.value.provider == .codex && rig.value.remainingPercent == 80,
+                       "后台Claude下降不能污染前台Codex额度")
+            try expect(rig.model.buddyActivity?.id == activity && rig.model.buddyFeedback == feedback,
+                       "后台Claude更新不应触发前台进食或反馈")
+            rig.model.selectProvider(.claude)
+            try expect(rig.value.remainingPercent == 84 && rig.model.buddyActivity == nil
+                       && rig.model.feedbackMessage.kind == .encouragement,
+                       "切回Claude仅恢复已存基线，不回放刷新和互动")
+            try expect(rig.model.buddyFeedback.lastObservedAt == rig.value.observedAt,
+                       "平台切换应把所选平台观测时间作为去重基线")
+            try rig.accept(rig.claudeSnapshot(83, seconds: 2, reset: rig.reset.addingTimeInterval(3_600)))
+            try expect(rig.model.buddyActivity == nil, "Claude重置周期变化不能被误判为消耗")
+            try rig.accept(rig.claudeSnapshot(82, seconds: 3, reset: rig.reset.addingTimeInterval(3_600)))
+            try expect(rig.model.buddyActivity?.source == .usage,
+                       "Claude新周期建立基线后的真实下降应正常触发互动")
+        }
+
+        // 20. A single model clock drives quiet, deterministic autonomous acts
+        // without a collector, a second view, or fabricated quota consumption.
+        do {
+            let rig = try InteractionRig(parent: directory, name: "companion-clock")
+            try rig.accept(rig.snapshot(80))
+            let records = rig.model.document.records
+            let start = rig.model.now
+            rig.model.shellTestResetCompanion(now: start, seed: 42)
+            var moments: [(second: Int, action: BuddyAction)] = []
+            var previousID: UUID?
+            for second in 1...300 {
+                rig.model.advanceClock(to: start.addingTimeInterval(Double(second)))
+                if let activity = rig.model.buddyActivity, activity.id != previousID {
+                    try expect(activity.source == .companion && activity.action != .eating && activity.action != .idle,
+                               "自主动作必须独立标记，不能伪造真实进食")
+                    try expect(!rig.model.feedbackMessage.text.isEmpty
+                               && rig.model.feedbackMessage.kind == .encouragement,
+                               "自主活动应带有可读的轻声关怀，而非虚假刷新提示")
+                    moments.append((second, activity.action))
+                    previousID = activity.id
+                }
+            }
+            try expect((2...4).contains(moments.count), "五分钟内只应出现少量低频自主活动")
+            try expect(moments.first.map { (35...60).contains($0.second) } == true,
+                       "初次自主活动应安静等待35至60秒")
+            for index in 1..<moments.count {
+                try expect((70...130).contains(moments[index].second - moments[index - 1].second),
+                           "后续自主活动应间隔70至130秒")
+                try expect(moments[index].action != moments[index - 1].action,
+                           "连续自主活动不应重复同一动作")
+            }
+            let persisted = try rig.model.store.read().records
+            try expect(rig.model.document.records == records && persisted == records,
+                       "自主关怀不得改动额度、Token用量或采样时间")
+            try expect(!rig.model.collector.isRunning && !rig.model.claudeCollector.isRunning,
+                       "自主陪伴不能暗中启动账号读取")
+        }
+
+        // 21. Hidden, sleeping, disabled, reduced-motion and settings surfaces
+        // remain quiet. Resuming never replays a backlog of autonomous actions.
+        do {
+            for mode in ["hidden", "sleeping", "disabled", "reduced-motion", "settings"] {
+                let rig = try InteractionRig(parent: directory, name: "companion-quiet-\(mode)")
+                try rig.accept(rig.snapshot(80))
+                let records = rig.model.document.records
+                let start = rig.model.now
+                rig.model.shellTestResetCompanion(now: start, seed: 42, reduceMotion: mode == "reduced-motion")
+                rig.model.companionVisible = mode != "hidden"
+                rig.model.companionSleeping = mode == "sleeping"
+                rig.model.companionEnabled = mode != "disabled"
+                let settingsSurface = NSObject()
+                if mode == "settings" { StandaloneMenuTracking.began(settingsSurface) }
+                defer { if mode == "settings" { StandaloneMenuTracking.ended(settingsSurface) } }
+                for second in 1...180 {
+                    rig.model.advanceClock(to: start.addingTimeInterval(Double(second)))
+                    try expect(rig.model.buddyActivity == nil, "\(mode)期间不得触发自主动作")
+                }
+                rig.model.companionVisible = true
+                rig.model.companionSleeping = false
+                rig.model.companionEnabled = true
+                if mode == "settings" { StandaloneMenuTracking.ended(settingsSurface) }
+                if mode == "reduced-motion" {
+                    rig.model.shellTestResetCompanion(now: start.addingTimeInterval(180), seed: 42)
+                }
+                // Settings are busy rather than paused, so their next act waits
+                // at least 12 seconds after the last busy tick. Other surfaces
+                // restart the complete 35-second quiet interval.
+                let quietEnd = mode == "settings" ? 191 : 214
+                for second in 181...quietEnd {
+                    rig.model.advanceClock(to: start.addingTimeInterval(Double(second)))
+                    try expect(rig.model.buddyActivity == nil, "\(mode)恢复后应先安静等待，不补播积压活动")
+                }
+                var resumed = false
+                for second in (quietEnd + 1)...242 {
+                    rig.model.advanceClock(to: start.addingTimeInterval(Double(second)))
+                    resumed = resumed || rig.model.buddyActivity?.source == .companion
+                }
+                try expect(resumed, "\(mode)恢复并经过安静等待后应可再次陪伴")
+                try expect(rig.model.document.records == records, "静默和恢复不能产生假额度记录")
+            }
+        }
+
+        // 22. Explicit play takes priority over autonomous company and starts
+        // a new cooldown; a genuine quota decrease still outranks both.
+        do {
+            let rig = try InteractionRig(parent: directory, name: "companion-manual-priority")
+            try rig.accept(rig.snapshot(80))
+            let records = rig.model.document.records
+            let start = Date()
+            rig.model.shellTestResetCompanion(now: start, seed: 42)
+            let moment = BuddyCompanionMoment(action: .peek, caption: "探个头，陪你慢慢来")
+            rig.model.buddyActivity = BuddyActivity(action: .peek, startedAt: start, source: .companion)
+            rig.model.buddyFeedback = BuddyFeedbackState(observedAt: rig.value.observedAt)
+            let accepted = rig.model.buddyFeedback.accompany(moment, now: start)
+            try expect(accepted, "优先级检查应先建立自主动作与文案")
+            rig.model.play(.nuzzle)
+            let playStart = rig.model.now
+            let playID = rig.model.buddyActivity?.id
+            let response = rig.model.feedbackMessage
+            try expect(rig.model.buddyActivity?.source == .play && rig.model.buddyActivity?.action == .nuzzle
+                       && response.kind == .interaction,
+                       "手动撒娇应立即替换自主动作与文案")
+            for second in 1...69 {
+                rig.model.advanceClock(to: playStart.addingTimeInterval(Double(second)))
+                try expect(rig.model.buddyActivity?.source != .companion,
+                           "手动互动后的70秒冷却内不得插入自主活动")
+                if second <= 2 {
+                    try expect(rig.model.buddyActivity?.id == playID && rig.model.feedbackMessage == response,
+                               "手动动作与阅读时间应得到优先保留")
+                }
+            }
+            try expect(rig.model.document.records == records, "手动优先与冷却不能修改真实额度")
+            try rig.accept(rig.snapshot(79, seconds: 1))
+            let usageID = rig.model.buddyActivity?.id
+            try expect(rig.model.buddyActivity?.source == .usage && rig.model.buddyActivity?.action == .eating,
+                       "确认的真实消耗应优先播放进食")
+            rig.model.play(.sip)
+            try expect(rig.model.buddyActivity?.id == usageID,
+                       "喝水等娱乐互动不能打断真实消耗的进食")
+        }
+
+        // 23. Continuous real usage at the collector's 60-second cadence must
+        // not starve autonomous company by restarting a 70–130-second delay.
+        // Inject the same past clock into reception and ticking so this catches
+        // the old starvation behavior without sleeps or rewriting activities.
+        do {
+            let rig = try InteractionRig(parent: directory, name: "continuous-usage-allows-company")
+            let start = Date().addingTimeInterval(-20 * 60)
+            try rig.accept(rig.snapshot(95, seconds: start.timeIntervalSince(rig.base)), now: start)
+            rig.model.shellTestResetCompanion(now: start, seed: 42)
+            var expectedRecords = rig.model.document.records
+            var meals = 0
+            var afterUsageMoments = 0
+            var previousCompanionID: UUID?
+            var lastMealAt: Date?
+            for second in 1...660 {
+                let date = start.addingTimeInterval(Double(second))
+                if second.isMultiple(of: 60), second <= 600 {
+                    let remaining = 95 - Double(second / 60)
+                    try rig.accept(rig.snapshot(remaining, seconds: date.timeIntervalSince(rig.base)), now: date)
+                    try expect(rig.model.buddyActivity?.source == .usage
+                               && rig.model.buddyActivity?.action == .eating
+                               && rig.model.buddyActivity?.startedAt == date,
+                               "每60秒确认一次真实下降应在同一时钟上触发进食")
+                    try expect(rig.model.buddyActivity?.consumedPercent == 1,
+                               "连续消费每次只按实际下降1%喂食")
+                    expectedRecords = rig.model.document.records
+                    meals += 1
+                    lastMealAt = date
+                }
+                let before = rig.model.buddyActivity
+                rig.model.advanceClock(to: date)
+                if let before, before.source == .usage,
+                   date.timeIntervalSince(before.startedAt) < before.duration {
+                    try expect(rig.model.buddyActivity?.id == before.id,
+                               "自主调度不能打断尚未结束的真实进食")
+                }
+                if let activity = rig.model.buddyActivity, activity.source == .companion,
+                   activity.id != previousCompanionID {
+                    previousCompanionID = activity.id
+                    if let lastMealAt {
+                        afterUsageMoments += 1
+                        try expect(date.timeIntervalSince(lastMealAt) >= 12,
+                                   "真实进食后应留出安静间隔，再恢复自主陪伴")
+                    }
+                }
+                try expect(rig.model.document.records == expectedRecords,
+                           "消费间隙的时钟与自主互动不能新增额度消耗或更新时间")
+            }
+            try expect(meals == 10 && (3...8).contains(afterUsageMoments),
+                       "连续每60秒消费时，仍应偶尔自主活动，不能永远只吃饼干")
+            try expect(rig.value.remainingPercent == 85, "连续真实下降应仅把95%更新为85%")
+            let persisted = try rig.model.store.read().records
+            try expect(persisted == expectedRecords, "自主陪伴不能向磁盘补写虚假消费")
         }
 
     }

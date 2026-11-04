@@ -2,9 +2,10 @@ import Foundation
 
 /// Transient visual reactions never alter quota, timestamps or the stored satiety level.
 public enum BuddyAction: String, Codable, Sendable, CaseIterable {
-    case idle, eating, pat, wave, nap, celebrate, jump, dance, spin
+    case idle, eating, pat, wave, nap, celebrate, jump, dance, spin, stretch, nuzzle, peek, sip
 
-    public static let interactiveActions: [Self] = [.pat, .wave, .jump, .dance, .spin, .nap, .celebrate, .eating]
+    public static let interactiveActions: [Self] = [.pat, .wave, .jump, .dance, .spin, .nap, .celebrate, .eating,
+                                                  .stretch, .nuzzle, .peek, .sip]
     /// A random greeting cannot be confused with an automatically consumed meal.
     public static let playfulActions = interactiveActions.filter { $0 != .eating }
 
@@ -19,6 +20,10 @@ public enum BuddyAction: String, Codable, Sendable, CaseIterable {
         case .jump: "跳一跳"
         case .dance: "摇摇摆"
         case .spin: "转个圈"
+        case .stretch: "伸伸懒腰"
+        case .nuzzle: "蹭蹭你"
+        case .peek: "探个头"
+        case .sip: "一起喝水"
         }
     }
     public var symbol: String {
@@ -32,6 +37,10 @@ public enum BuddyAction: String, Codable, Sendable, CaseIterable {
         case .jump: "arrow.up"
         case .dance: "music.note"
         case .spin: "arrow.triangle.2.circlepath"
+        case .stretch: "figure.flexibility"
+        case .nuzzle: "heart.fill"
+        case .peek: "eyes"
+        case .sip: "cup.and.saucer.fill"
         }
     }
     public var duration: TimeInterval {
@@ -40,7 +49,9 @@ public enum BuddyAction: String, Codable, Sendable, CaseIterable {
         case .eating: 3
         case .jump: 2.2
         case .dance: 2.8
-        case .pat, .wave, .nap, .celebrate, .spin: 2.4
+        case .stretch, .sip: 3
+        case .nuzzle: 2.8
+        case .pat, .wave, .nap, .celebrate, .spin, .peek: 2.4
         }
     }
 
@@ -77,6 +88,21 @@ public enum BuddyAction: String, Codable, Sendable, CaseIterable {
             let turn = t * t * (3 - 2 * t)
             return .init(rotationDegrees: 360 * turn, verticalOffset: -0.045 * sin(t * .pi),
                          scaleX: 1 - 0.06 * envelope, scaleY: 1 - 0.06 * envelope)
+        case .stretch:
+            return .init(rotationDegrees: sin(t * .pi * 2) * 2 * envelope,
+                         verticalOffset: -0.026 * envelope,
+                         scaleX: 1 - 0.035 * envelope, scaleY: 1 + 0.075 * envelope)
+        case .nuzzle:
+            return .init(rotationDegrees: sin(t * .pi * 4) * 5 * envelope,
+                         horizontalOffset: sin(t * .pi * 2) * 0.04 * envelope,
+                         scaleX: 1 + 0.025 * envelope, scaleY: 1 + 0.025 * envelope)
+        case .peek:
+            return .init(rotationDegrees: -5 * sin(t * .pi * 2) * envelope,
+                         horizontalOffset: 0.05 * sin(t * .pi), verticalOffset: -0.024 * envelope)
+        case .sip:
+            return .init(rotationDegrees: -6 * envelope,
+                         verticalOffset: -0.008 * sin(t * .pi * 4) * envelope,
+                         scaleX: 1 + 0.012 * envelope, scaleY: 1 + 0.012 * envelope)
         }
     }
 }
@@ -99,16 +125,23 @@ public struct BuddyMotionSample: Equatable, Sendable {
     }
 }
 
-/// Compares already validated, selected Codex observations. The caller must invoke this
+/// Compares already validated, selected provider observations. The caller must invoke this
 /// only when ingesting a real collector snapshot, never for a preview or a preference change.
 public enum BuddyQuotaChange {
     /// Returns the observed decrease in percentage points, not an inferred token count.
     /// Missing cycle evidence is deliberately quiet rather than mistaking a reset for a meal.
     public static func consumption(from previous: QuotaPresentation, to next: QuotaPresentation) -> Double? {
-        guard previous.provider == .codex, next.provider == .codex,
+        let allowedWindowIDs: [String]
+        switch previous.provider {
+        case .codex: allowedWindowIDs = ["primary", "secondary"]
+        // These are the only windows emitted by the visible Claude usage parser.
+        case .claude: allowedWindowIDs = ["session", "weekly", "sonnet-weekly"]
+        default: return nil
+        }
+        guard previous.provider == next.provider,
               previous.freshness == .fresh, next.freshness == .fresh,
               let oldWindow = previous.window, let newWindow = next.window,
-              ["primary", "secondary"].contains(oldWindow.id), oldWindow.id == newWindow.id,
+              allowedWindowIDs.contains(oldWindow.id), oldWindow.id == newWindow.id,
               oldWindow.label == newWindow.label,
               let before = previous.remainingPercent, let after = next.remainingPercent,
               before.isFinite, after.isFinite, (0...100).contains(before), (0...100).contains(after),

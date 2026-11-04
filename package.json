@@ -1,9 +1,9 @@
 {
   "name": "yuliang-quota-monitor",
-  "version": "0.15.0",
+  "version": "0.16.0",
   "private": true,
   "type": "module",
-  "description": "A tiny native macOS Codex quota and token usage widget with original animated buddies.",
+  "description": "A tiny native macOS Codex and Claude quota widget with original animated buddies.",
   "license": "MIT",
   "engines": {
     "node": ">=20"
@@ -16,6 +16,7 @@
     "test": "node apple/scripts/check-core.mjs",
     "check": "node apple/scripts/check-public.mjs",
     "check:codex": "node apple/scripts/check-codex-collector.mjs",
+    "check:claude": "node apple/scripts/check-claude-collector.mjs",
     "check:mac-ui": "node apple/scripts/check-standalone-ui.mjs",
     "build:mac": "node apple/scripts/build-standalone.mjs",
     "install:mac": "node apple/scripts/install-standalone.mjs",

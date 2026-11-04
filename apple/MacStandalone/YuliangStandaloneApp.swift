@@ -21,6 +21,39 @@ enum StandaloneDisplayStyle: String, CaseIterable {
     var label: String { self == .card ? "轻巧卡片" : "Duo 圆环" }
 }
 
+/// Desktop emphasis is separate from light/dark appearance, as it is for
+/// macOS widgets. This is a public AppKit approximation of desktop rendering.
+enum StandaloneWidgetColorStyle: String, CaseIterable {
+    case automatic, fullColor, monochrome
+    var label: String {
+        switch self {
+        case .automatic: return "自动 · 后台淡为单色"
+        case .fullColor: return "始终全彩"
+        case .monochrome: return "始终单色"
+        }
+    }
+    func isMonochrome(desktopIsForeground: Bool) -> Bool {
+        self == .monochrome || (self == .automatic && !desktopIsForeground)
+    }
+}
+
+private struct StandaloneWidgetMaterial: NSViewRepresentable {
+    let emphasized: Bool
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.identifier = NSUserInterfaceItemIdentifier("yuliang.widget.material")
+        view.blendingMode = .behindWindow
+        view.material = .underWindowBackground
+        view.isEmphasized = false
+        return view
+    }
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {
+        // A nonactivating desktop panel never becomes the key window. Drive
+        // material state from desktop emphasis instead of its key status.
+        view.state = emphasized ? .active : .inactive
+    }
+}
+
 enum StandaloneLayout {
     static let cornerRadius: CGFloat = 22
     static let height: CGFloat = 160
@@ -57,15 +90,40 @@ final class StandaloneModel: ObservableObject {
     @Published var showDailyTokens = true { didSet { onDisplayChange?() } }
     @Published var showLifetimeTokens = true { didSet { onDisplayChange?() } }
     @Published var appearance = StandaloneAppearance.system { didSet { onAppearance?(appearance) } }
+    @Published var widgetColorStyle = StandaloneWidgetColorStyle.automatic { didSet { onWidgetColorChange?(widgetColorStyle) } }
+    @Published var desktopIsForeground = true
     @Published var displayStyle = StandaloneDisplayStyle.card { didSet { onStyleChange?() } }
     @Published var buddyActivity: BuddyActivity?
     @Published var buddyFeedback = BuddyFeedbackState()
+    @Published var companionEnabled = true { didSet { onCompanionChange?(companionEnabled) } }
+    var companionVisible = true
+    var companionSleeping = false
+    private var companionSchedule = BuddyCompanionSchedule()
+    #if QUOTA_SHELL_TESTING
+    private var companionReduceMotionOverride: Bool?
+    func shellTestResetCompanion(now: Date, seed: UInt64, reduceMotion: Bool = false) {
+        companionSchedule = BuddyCompanionSchedule(now: now, seed: seed)
+        companionReduceMotionOverride = reduceMotion
+    }
+    func shellTestReceiveSnapshot(_ snapshot: SnapshotEnvelope, now: Date) throws {
+        try receive(snapshot, now: now)
+    }
+    #endif
+    private var companionReduceMotion: Bool {
+        #if QUOTA_SHELL_TESTING
+        if let override = companionReduceMotionOverride { return override }
+        #endif
+        return NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    }
     private var clock: AnyCancellable?
     private var feedbackTransition: DispatchWorkItem?
     private var lastPlay: BuddyAction = .idle
     let collector: CodexQuotaCollector
+    let claudeCollector: QuotaWebCollector
     let store: StandaloneQuotaStore
     var onConnect: (() -> Void)?
+    var onConnectClaude: (() -> Void)?
+    var onCompanionChange: ((Bool) -> Void)?
     var onChooseCharacter: ((StandaloneSurface) -> Void)?
     var onResize: ((Bool) -> Void)?
     var onPin: ((Bool) -> Void)?
@@ -74,14 +132,17 @@ final class StandaloneModel: ObservableObject {
     var onShowDesktop: (() -> Void)?
     var onDisplayChange: (() -> Void)?
     var onAppearance: ((StandaloneAppearance) -> Void)?
+    var onWidgetColorChange: ((StandaloneWidgetColorStyle) -> Void)?
     var onStyleChange: (() -> Void)?
 
     init(store: StandaloneQuotaStore = .shared) {
         self.store = store
         self.collector = CodexQuotaCollector()
+        self.claudeCollector = QuotaWebCollector()
         do { document = try store.read() }
         catch { self.error = error.localizedDescription }
-        if document.preferences.providerId != .codex {
+        if !FileManager.default.fileExists(atPath: store.directory.appendingPathComponent("quota.json").path)
+            || ![QuotaProvider.codex, .claude].contains(document.preferences.providerId) {
             do {
                 try store.updatePreferences { $0.providerId = .codex; $0.windowId = nil }
                 document = try store.read()
@@ -97,36 +158,65 @@ final class StandaloneModel: ObservableObject {
         }
         buddyFeedback = BuddyFeedbackState(observedAt: QuotaPresentation(document: document).observedAt)
         collector.onSnapshot = { [weak self] snapshot in
-            guard let self else { return }
-            let previous = QuotaPresentation(document: self.document)
-            _ = try self.store.ingest(snapshot)
-            let latest = try self.store.read()
-            let next = QuotaPresentation(document: latest)
-            self.animateQuota = previous.provider == next.provider
-                && previous.window?.id == next.window?.id
+            try self?.receive(snapshot)
+        }
+        claudeCollector.onSnapshot = { [weak self] snapshot in try self?.receive(snapshot) }
+        clock = Timer.publish(every: 1, on: .main, in: .common).autoconnect().sink { [weak self] date in
+            self?.advanceClock(to: date)
+        }
+    }
+    private func receive(_ snapshot: SnapshotEnvelope, now receivedAt: Date = Date()) throws {
+        let previous = QuotaPresentation(document: document, now: receivedAt)
+        let changed = try store.ingest(snapshot)
+        let latest = try store.read()
+        let next = QuotaPresentation(document: latest, now: receivedAt)
+        let selected = snapshot.providerId == next.provider
+        if selected {
+            animateQuota = previous.provider == next.provider && previous.window?.id == next.window?.id
                 && previous.freshness == .fresh && next.freshness == .fresh
                 && previous.remainingPercent != nil && next.remainingPercent != nil
                 && previous.remainingPercent != next.remainingPercent
                 && (next.observedAt ?? .distantPast) > (previous.observedAt ?? .distantFuture)
-            self.document = latest
-            self.now = Date()
-            if let observedAt = next.observedAt {
-                self.buddyFeedback.didRefresh(observedAt: observedAt, now: self.now)
-                self.scheduleFeedbackTransition()
-            }
-            if let consumed = BuddyQuotaChange.consumption(from: previous, to: next) {
-                self.buddyActivity = BuddyActivity(action: .eating, startedAt: self.now, source: .usage, consumedPercent: consumed)
-            }
-            self.error = nil
         }
-        clock = Timer.publish(every: 1, on: .main, in: .common).autoconnect().sink { [weak self] date in
-            guard let self else { return }
-            self.now = date
-            if let activity = self.buddyActivity, date.timeIntervalSince(activity.startedAt) >= activity.duration {
-                self.buddyActivity = nil
-            }
+        document = latest
+        now = receivedAt
+        guard selected, changed else { return }
+        if let observedAt = next.observedAt {
+            buddyFeedback.didRefresh(observedAt: observedAt, now: now)
+            scheduleFeedbackTransition()
+        }
+        if let consumed = BuddyQuotaChange.consumption(from: previous, to: next) {
+            buddyActivity = BuddyActivity(action: .eating, startedAt: now, source: .usage, consumedPercent: consumed)
+            // The shared clock protects eating via its busy context and a short
+            // quiet interval. Resetting the whole idle deadline every 60-second
+            // consumption observation would prevent all autonomous company.
+        }
+        error = nil
+    }
+    func advanceClock(to date: Date) {
+        now = date
+        if let activity = buddyActivity, date.timeIntervalSince(activity.startedAt) >= activity.duration { buddyActivity = nil }
+        let context = BuddyCompanionContext(isVisible: companionVisible,
+            isBusy: buddyActivity != nil || StandaloneMenuTracking.isActive,
+            isSleeping: companionSleeping, reduceMotion: companionReduceMotion,
+            isEnabled: companionEnabled)
+        if let moment = companionSchedule.tick(now: date, context: context), buddyFeedback.accompany(moment, now: date) {
+            buddyActivity = BuddyActivity(action: moment.action, startedAt: date, source: .companion)
+            scheduleFeedbackTransition()
         }
     }
+    func selectProvider(_ provider: QuotaProvider) {
+        guard [.codex, .claude].contains(provider), provider != document.preferences.providerId else { return }
+        preference { $0.providerId = provider; $0.windowId = nil }
+        buddyFeedback = BuddyFeedbackState(observedAt: QuotaPresentation(document: document, now: now).observedAt)
+        companionSchedule.postpone(after: now)
+    }
+    func refreshSelected() {
+        if document.preferences.providerId == .claude { claudeCollector.refreshNow() }
+        else { collector.refreshNow() }
+    }
+    var selectedBusy: Bool { document.preferences.providerId == .claude ? claudeCollector.isBusy : collector.isBusy }
+    var selectedQuotaError: String? { document.preferences.providerId == .claude ? claudeCollector.lastError : collector.quotaError }
     func preference(_ action: (inout QuotaPreferences) -> Void) {
         animateQuota = false
         do {
@@ -150,6 +240,7 @@ final class StandaloneModel: ObservableObject {
         now = Date()
         buddyActivity = BuddyActivity(action: action, startedAt: now, source: .play)
         buddyFeedback.interact(action, now: now)
+        companionSchedule.postpone(after: now)
         scheduleFeedbackTransition()
     }
     func feed() { play(.eating) }
@@ -167,6 +258,7 @@ final class StandaloneModel: ObservableObject {
         if eating == nil {
             now = Date()
             buddyFeedback.interact(.wave, now: now)
+            companionSchedule.postpone(after: now)
             scheduleFeedbackTransition()
         }
     }
@@ -182,11 +274,12 @@ final class StandaloneModel: ObservableObject {
         let value = QuotaPresentation(document: document, now: now)
         let issue: String?
         if error != nil { issue = "读取失败，点此查看" }
-        else if collector.needsLogin { issue = "请先登录 Codex" }
-        else if collector.quotaError != nil { issue = "额度读取失败，点此查看" }
+        else if value.provider == .codex && collector.needsLogin { issue = "请先登录 Codex" }
+        else if value.provider == .claude && claudeCollector.needsLogin { issue = "请先连接 Claude" }
+        else if selectedQuotaError != nil { issue = "额度读取失败，点此查看" }
         else {
             switch value.freshness {
-            case .missing: issue = "等待读取 Codex 额度"
+            case .missing: issue = value.provider == .claude ? "连接 Claude 额度" : "等待读取 Codex 额度"
             case .stale: issue = "上次额度已陈旧，点此查看"
             case .resetDue: issue = "额度重置待核对"
             case .fresh: issue = value.remainingPercent == nil ? "官方未提供额度比例" : nil
@@ -293,7 +386,7 @@ enum StandaloneSettingsKind { case settings, interactions }
 
 @MainActor
 final class StandaloneSettingsPanelController: NSViewController {
-    enum Page { case home, styles, display, appearance, windows, characters, interactions }
+    enum Page { case home, sources, styles, display, appearance, windows, characters, interactions }
     private final class ActionTarget: NSObject {
         let action: () -> Void
         init(_ action: @escaping () -> Void) { self.action = action }
@@ -333,6 +426,7 @@ final class StandaloneSettingsPanelController: NSViewController {
         super.init(nibName: nil, bundle: nil)
         model.objectWillChange.sink { [weak self] _ in self?.scheduleStateRefresh() }.store(in: &subscriptions)
         model.collector.objectWillChange.sink { [weak self] _ in self?.scheduleStateRefresh() }.store(in: &subscriptions)
+        model.claudeCollector.objectWillChange.sink { [weak self] _ in self?.scheduleStateRefresh() }.store(in: &subscriptions)
     }
     init(action: @escaping (BuddyAction) -> Void, enabled: Bool) {
         model = nil; surface = .desktop; kind = .interactions; page = .interactions
@@ -382,6 +476,7 @@ final class StandaloneSettingsPanelController: NSViewController {
     private var pageTitle: String {
         switch page {
         case .home: return "设置"
+        case .sources: return "额度来源"
         case .styles: return "小组件样式"
         case .display: return "显示内容"
         case .appearance: return "外观"
@@ -421,7 +516,8 @@ final class StandaloneSettingsPanelController: NSViewController {
             switch page {
             case .home:
                 pair(("用量与额度详情", "details", { model.onConnect?() }),
-                     ("立即刷新", "refresh", { model.collector.refreshNow() }))
+                     ("立即刷新", "refresh", { model.refreshSelected() }))
+                navigation("额度来源", page: .sources, id: "sources")
                 navigation("小组件样式", page: .styles, id: "styles")
                 navigation("显示内容", page: .display, id: "display")
                 navigation("外观", page: .appearance, id: "appearance")
@@ -433,6 +529,16 @@ final class StandaloneSettingsPanelController: NSViewController {
                 pair(("显示／收起卡片", "desktopVisible", { model.desktopVisible.toggle() }),
                      ("移回当前屏幕", "reposition", { model.onShowDesktop?() }))
                 row("退出余量", id: "quit") { NSApplication.shared.terminate(nil) }
+            case .sources:
+                for provider in [QuotaProvider.codex, .claude] {
+                    check(provider.name, id: "source." + provider.rawValue,
+                          selected: { model.document.preferences.providerId == provider }, radio: true) { model.selectProvider(provider) }
+                }
+                row("连接 Claude 官网", id: "source.connectClaude") {
+                    model.selectProvider(.claude)
+                    model.onConnectClaude?()
+                }
+                row("查看当前额度详情", id: "source.details") { model.onConnect?() }
             case .styles:
                 for style in StandaloneDisplayStyle.allCases {
                     check(style.label, id: "style." + style.rawValue, selected: { model.displayStyle == style }, radio: true) { model.displayStyle = style }
@@ -441,9 +547,18 @@ final class StandaloneSettingsPanelController: NSViewController {
                 check("日 Token 用量", id: "display.dailyTokens", selected: { model.showDailyTokens }) { model.showDailyTokens.toggle() }
                 check("累计 Token 用量", id: "display.lifetimeTokens", selected: { model.showLifetimeTokens }) { model.showLifetimeTokens.toggle() }
                 check("紧凑模式", id: "display.compact", selected: { model.compact }) { model.compact.toggle() }
+                check("自主陪伴", id: "display.companion", selected: { model.companionEnabled }) { model.companionEnabled.toggle() }
             case .appearance:
-                for appearance in StandaloneAppearance.allCases {
-                    check(appearance.label, id: "appearance." + appearance.rawValue, selected: { model.appearance == appearance }, radio: true) { model.appearance = appearance }
+                radioGroup {
+                    for appearance in StandaloneAppearance.allCases {
+                        check(appearance.label, id: "appearance." + appearance.rawValue, selected: { model.appearance == appearance }, radio: true) { model.appearance = appearance }
+                    }
+                }
+                radioGroup {
+                    for style in StandaloneWidgetColorStyle.allCases {
+                        check(style.label, id: "widgetColor." + style.rawValue,
+                              selected: { model.widgetColorStyle == style }, radio: true) { model.widgetColorStyle = style }
+                    }
                 }
             case .windows:
                 if model.windows.isEmpty { row("等待首次读取", id: "window.empty", enabled: { false }) {} }
@@ -505,6 +620,16 @@ final class StandaloneSettingsPanelController: NSViewController {
                                 type: radio ? .radio : .switch, action: action)
         states.append((button, selected)); nextY += 30
     }
+    private func radioGroup(_ build: () -> Void) {
+        guard let parent = documentView else { return }
+        let startY = nextY
+        let group = Surface(frame: NSRect(x: 0, y: startY, width: 244, height: 1))
+        parent.addSubview(group)
+        documentView = group; nextY = 0
+        build()
+        group.frame.size.height = nextY
+        documentView = parent; nextY += startY + 8
+    }
     private func navigation(_ title: String, page: Page, id: String) {
         row(title + "  ›", id: "nav." + id) { [weak self] in self?.navigate(page) }
     }
@@ -513,8 +638,8 @@ final class StandaloneSettingsPanelController: NSViewController {
         let first = makeButton(left.0, id: left.1, frame: NSRect(x: 6, y: nextY, width: 116, height: 30), in: documentView, action: left.2)
         let second = makeButton(right.0, id: right.1, frame: NSRect(x: 126, y: nextY, width: 112, height: 30), in: documentView, action: right.2)
         first.font = .systemFont(ofSize: 11); second.font = .systemFont(ofSize: 11)
-        if left.1 == "refresh", let model { enabledStates.append((first, { !model.collector.isBusy })) }
-        if right.1 == "refresh", let model { enabledStates.append((second, { !model.collector.isBusy })) }
+        if left.1 == "refresh", let model { enabledStates.append((first, { !model.selectedBusy })) }
+        if right.1 == "refresh", let model { enabledStates.append((second, { !model.selectedBusy })) }
         nextY += 30
     }
 }
@@ -646,6 +771,72 @@ struct StandaloneBuddyContextMenu: NSViewRepresentable {
     }
 }
 
+/// A transparent context surface leaves normal taps, rail gestures and header
+/// dragging with their existing receivers. Character context clicks keep their
+/// own interaction panel even when the character moves along the rail or ring.
+struct StandaloneWidgetContextMenu: NSViewRepresentable {
+    @ObservedObject var model: StandaloneModel
+    let surface: StandaloneSurface
+
+    final class ContextView: NSView {
+        weak var model: StandaloneModel?
+        var surface = StandaloneSurface.desktop
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+        override var mouseDownCanMoveWindow: Bool { false }
+
+        func acceptsContextClick(_ event: NSEvent, at windowPoint: NSPoint) -> Bool {
+            guard event.type == .rightMouseDown || event.type == .rightMouseUp
+                    || (event.type == .leftMouseDown && event.modifierFlags.contains(.control)),
+                  bounds.contains(convert(windowPoint, from: nil)) else { return false }
+            guard let root = window?.contentView else { return false }
+            return !containsCharacterContext(at: windowPoint, in: root)
+        }
+
+        override func hitTest(_ point: NSPoint) -> NSView? {
+            guard let event = NSApp.currentEvent else { return nil }
+            let localPoint = convert(point, from: superview)
+            guard acceptsContextClick(event, at: convert(localPoint, to: nil)) else { return nil }
+            return super.hitTest(point)
+        }
+
+        private func containsCharacterContext(at windowPoint: NSPoint, in view: NSView) -> Bool {
+            guard !view.isHidden, view.alphaValue > 0 else { return false }
+            if view.identifier?.rawValue == "yuliang.buddy.contextMenu",
+               view.convert(view.bounds, to: nil).contains(windowPoint) { return true }
+            return view.subviews.contains { containsCharacterContext(at: windowPoint, in: $0) }
+        }
+
+        override func rightMouseDown(with event: NSEvent) { showPanel() }
+        override func mouseDown(with event: NSEvent) {
+            if event.modifierFlags.contains(.control) { showPanel() }
+        }
+        override func accessibilityPerformShowMenu() -> Bool { showPanel() }
+
+        @discardableResult
+        private func showPanel() -> Bool {
+            guard let model, window != nil else { return false }
+            StandaloneSettingsPresenter.show(model: model, surface: surface, kind: .settings, anchor: self)
+            return true
+        }
+    }
+
+    func makeNSView(context: Context) -> ContextView {
+        let view = ContextView()
+        view.identifier = NSUserInterfaceItemIdentifier("yuliang.widget.contextMenu")
+        view.setAccessibilityIdentifier("yuliang.widget.contextMenu")
+        view.setAccessibilityElement(true)
+        view.setAccessibilityRole(.group)
+        view.setAccessibilityLabel("小组件设置")
+        view.setAccessibilityHelp("右键或按住 Control 点击，打开设置")
+        return view
+    }
+
+    func updateNSView(_ view: ContextView, context: Context) {
+        view.model = model
+        view.surface = surface
+    }
+}
+
 private struct StandaloneNativeMenuButton: NSViewRepresentable {
     @ObservedObject var model: StandaloneModel
     let surface: StandaloneSurface
@@ -691,10 +882,11 @@ private struct StandaloneNativeMenuButton: NSViewRepresentable {
 struct StandalonePanelView: View {
     @ObservedObject var model: StandaloneModel
     @ObservedObject var collector: CodexQuotaCollector
+    @ObservedObject var claudeCollector: QuotaWebCollector
     let surface: StandaloneSurface
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     init(model: StandaloneModel, surface: StandaloneSurface = .desktop) {
-        self.model = model; self.collector = model.collector; self.surface = surface
+        self.model = model; self.collector = model.collector; self.claudeCollector = model.claudeCollector; self.surface = surface
     }
     var accent: Color { QuotaPalette.accent(for: model.document.preferences.character) }
     var presentation: QuotaPresentation { QuotaPresentation(document: model.document, now: model.now) }
@@ -704,25 +896,30 @@ struct StandalonePanelView: View {
             if isDuo { duoBody }
             else { cardBody }
         }
+        .saturation(surface == .desktop && model.widgetColorStyle.isMonochrome(desktopIsForeground: model.desktopIsForeground) ? 0 : 1)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: model.desktopIsForeground)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: model.widgetColorStyle)
         .frame(width: isDuo ? 160 : StandaloneLayout.cardWidth(compact: model.compact), height: StandaloneLayout.height)
         .background {
             if surface == .desktop {
-                RoundedRectangle(cornerRadius: StandaloneLayout.cornerRadius, style: .continuous)
-                    .fill(.regularMaterial)
+                StandaloneWidgetMaterial(emphasized: !model.widgetColorStyle.isMonochrome(desktopIsForeground: model.desktopIsForeground))
+                    .clipShape(RoundedRectangle(cornerRadius: StandaloneLayout.cornerRadius, style: .continuous))
             } else { QuotaPalette.surface }
         }
         .buttonStyle(.plain)
+        .overlay {
+            if surface == .desktop {
+                StandaloneWidgetContextMenu(model: model, surface: surface)
+            }
+        }
     }
 
     private var cardBody: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 5) {
                 HStack(spacing: 5) {
-                    Image(systemName: "circle.hexagongrid.fill").font(.system(size: 10))
-                    Text("Codex").font(.system(size: 12, weight: .semibold))
-                    if surface == .desktop {
-                        Image(systemName: "line.3.horizontal").font(.system(size: 8)).foregroundStyle(.tertiary)
-                    }
+                    Image(systemName: presentation.provider == .claude ? "sparkle" : "circle.hexagongrid.fill").font(.system(size: 10))
+                    Text(presentation.provider.name).font(.system(size: 12, weight: .semibold))
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .overlay {
@@ -731,28 +928,20 @@ struct StandalonePanelView: View {
                             .help(model.positionLocked ? "位置已锁定" : "拖动小组件")
                     }
                 }
-                if surface == .desktop {
-                    Button { model.positionLocked.toggle() } label: {
-                        Image(systemName: model.positionLocked ? "lock.fill" : "lock.open")
-                    }
-                    .frame(width: 20, height: 20)
-                    .help(model.positionLocked ? "解锁位置" : "锁定位置")
-                    .accessibilityLabel(model.positionLocked ? "解锁位置" : "锁定位置")
-                    Button { model.desktopVisible = false } label: { Image(systemName: "minus") }
-                        .frame(width: 20, height: 20)
-                        .help("收起桌面卡片").accessibilityLabel("收起桌面卡片")
-                } else {
+                if surface == .menuBar {
                     Button { model.onShowDesktop?() } label: { Image(systemName: "macwindow.badge.plus") }
                         .help("显示桌面卡片").accessibilityLabel("显示桌面卡片")
+                    settingsMenu
                 }
-                settingsMenu
             }.font(.system(size: 11)).foregroundStyle(.secondary).frame(height: 18)
             QuotaCard(document: model.document, now: model.now, compact: true,
                       reaction: model.reaction, onPat: model.pat, animateChanges: model.animateQuota,
                       activity: model.buddyActivity, onAction: model.play, minimal: true, slim: true)
                 .frame(height: 66)
             Group {
-                if model.showDailyTokens || model.showLifetimeTokens {
+                if presentation.provider == .claude {
+                    claudeWindowStrip
+                } else if model.showDailyTokens || model.showLifetimeTokens {
                     HStack(spacing: 12) {
                         if model.showDailyTokens {
                             tokenValue("日用量 · \(TokenUsageFormat.day(collector.tokenUsage?.serverDay))",
@@ -807,7 +996,7 @@ struct StandalonePanelView: View {
 
     private var feedbackHelp: String {
         var lines = [model.feedbackMessage.text]
-        if let detail = model.error ?? collector.quotaError { lines.append(detail) }
+        if let detail = model.error ?? model.selectedQuotaError { lines.append(detail) }
         lines.append(presentation.observedAt.map { "额度更新 " + $0.formatted(date: .abbreviated, time: .standard) } ?? "额度尚未读取")
         lines.append("点按查看用量与额度详情")
         return lines.joined(separator: "\n")
@@ -817,30 +1006,54 @@ struct StandalonePanelView: View {
         VStack(spacing: 0) {
             HStack(spacing: 3) {
                 HStack(spacing: 4) {
-                    Text("Codex").font(.system(size: 11, weight: .semibold))
-                    if model.positionLocked { Image(systemName: "lock.fill").font(.system(size: 8)) }
+                    Text(presentation.provider.name).font(.system(size: 11, weight: .semibold))
                 }.frame(maxWidth: .infinity, alignment: .leading)
                     .frame(height: 16)
                     .overlay {
                         WindowDragHandle(locked: model.positionLocked)
                             .help(model.positionLocked ? "位置已锁定" : "拖动小组件")
                     }
-                settingsMenu
             }.foregroundStyle(.secondary).frame(height: 16)
             QuotaDuoGauge(document: model.document, now: model.now, reaction: model.reaction,
                           onPat: model.pat, animateChanges: model.animateQuota,
                           activity: model.buddyActivity, onAction: model.play, size: 86)
                 .frame(height: 86)
             HStack(spacing: 8) {
-                if model.showDailyTokens {
+                if presentation.provider == .claude {
+                    Text(presentation.window?.label ?? "待连接")
+                        .font(.system(size: 9)).foregroundStyle(.secondary).lineLimit(1)
+                } else if model.showDailyTokens {
                     duoToken("日", value: collector.tokenUsage?.serverDayTokens, daily: true)
                 }
-                if model.showLifetimeTokens {
+                if presentation.provider == .codex && model.showLifetimeTokens {
                     duoToken("累计", value: collector.tokenUsage?.lifetimeTokens, daily: false)
                 }
             }.frame(height: 14)
             feedbackFooter
         }.padding(.horizontal, 10).padding(.vertical, 9)
+    }
+
+    private var claudeWindowStrip: some View {
+        HStack(spacing: 12) {
+            if model.windows.isEmpty {
+                Button("连接 Claude 官网") { model.onConnectClaude?() }
+                    .font(.system(size: 11, weight: .medium)).foregroundStyle(accent)
+                    .accessibilityIdentifier("yuliang.claude.connect")
+            } else {
+                ForEach(Array(model.windows.prefix(2))) { window in
+                    Button { model.preference { $0.windowId = window.id } } label: {
+                        HStack(spacing: 4) {
+                            Circle().fill(presentation.window?.id == window.id ? accent : Color.secondary.opacity(0.3))
+                                .frame(width: 4, height: 4)
+                            Text(window.label).font(.system(size: 9)).foregroundStyle(.secondary).lineLimit(1)
+                            Text(window.remainingPercent.map { "\(Int($0.rounded()))%" } ?? "—")
+                                .font(.system(size: 11, weight: .semibold, design: .rounded)).monospacedDigit()
+                        }.frame(maxWidth: .infinity, alignment: .leading)
+                    }.help(window.resetAt.map { "重置 " + $0.formatted(date: .abbreviated, time: .shortened) } ?? "未提供重置时间")
+                        .accessibilityLabel("\(window.label)，\(window.remainingPercent.map { "剩余百分之\(Int($0.rounded()))" } ?? "额度未知")")
+                }
+            }
+        }.frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func duoToken(_ label: String, value: Int64?, daily: Bool) -> some View {
@@ -1004,5 +1217,66 @@ struct StandaloneConnectionView: View {
             Spacer(minLength: 8)
             Text(TokenUsageFormat.exact(value)).font(.system(size: 12, weight: .semibold)).monospacedDigit()
         }
+    }
+}
+
+/// Provider selection changes presentation only; each collector retains its own
+/// account session and history. Claude never borrows Codex token statistics.
+struct StandaloneConnectionRootView: View {
+    @ObservedObject var model: StandaloneModel
+    @ObservedObject var claude: QuotaWebCollector
+    init(model: StandaloneModel) { self.model = model; self.claude = model.claudeCollector }
+    var body: some View {
+        VStack(spacing: 0) {
+            Picker("额度来源", selection: Binding(get: { model.document.preferences.providerId }, set: model.selectProvider)) {
+                Text("Codex").tag(QuotaProvider.codex)
+                Text("Claude").tag(QuotaProvider.claude)
+            }.pickerStyle(.segmented).padding(.horizontal, 22).padding(.top, 16).padding(.bottom, 6)
+            if model.document.preferences.providerId == .codex {
+                StandaloneConnectionView(model: model)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        HStack {
+                            Text("Claude 订阅额度").font(.system(size: 18, weight: .semibold))
+                            Spacer()
+                            Button("连接官网") { model.onConnectClaude?() }
+                                .buttonStyle(.borderedProminent)
+                        }
+                        Text(claude.status).font(.callout).foregroundStyle(.secondary)
+                        if let error = claude.lastError { Text(error).font(.caption).foregroundStyle(.orange) }
+                        if model.windows.isEmpty {
+                            Text("在连接窗口登录官网后，开启每 60 秒自动读取。")
+                                .font(.callout).foregroundStyle(.secondary)
+                        }
+                        ForEach(model.windows) { window in
+                            Button { model.preference { $0.windowId = window.id } } label: {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(window.label).font(.system(size: 12, weight: .semibold))
+                                        Text(window.resetAt.map { "重置 " + $0.formatted(date: .abbreviated, time: .shortened) } ?? "官网未提供重置时间")
+                                            .font(.caption).foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    Text(window.remainingPercent.map { "剩余 \(Int($0.rounded()))%" } ?? "未知")
+                                        .font(.system(size: 14, weight: .semibold, design: .rounded)).monospacedDigit()
+                                }.padding(12).background(QuotaPalette.track, in: RoundedRectangle(cornerRadius: 10))
+                            }.buttonStyle(.plain)
+                        }
+                        HStack {
+                            if claude.isRunning { Button("暂停") { claude.pause() } }
+                            else { Button("开始刷新") { claude.start() }.disabled(!claude.hasUsagePage) }
+                            Button("立即刷新") { claude.refreshNow() }.disabled(!claude.hasUsagePage || claude.isBusy)
+                        }
+                        Text(claude.lastSuccessAt.map { "上次成功读取 " + $0.formatted(date: .abbreviated, time: .standard) } ?? "尚未读取")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Divider()
+                        Text("Claude 官网订阅额度独立保存，不与 Codex 合并。官网未显示 Token 使用量时不推算；外部浏览器的登录不会自动同步到应用的连接窗口。")
+                            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    }.padding(22)
+                }.frame(width: 430, height: 520)
+            }
+        }.frame(width: 430, height: 566).background(QuotaPalette.surface)
+            .preferredColorScheme(model.appearance.colorScheme)
     }
 }

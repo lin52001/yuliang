@@ -67,7 +67,7 @@ English production brief: “Production 2D anime chibi sprite atlas; exact 6 col
 
 ## 主题与数据源
 
-四位拟人主题不是模型公司的官方角色，不代表 OpenAI、Anthropic、DeepSeek、Google 或社区作者对余量的认可。选择角色只改变外观与互动，不改变额度来源：选择橘光学姐不会连接 Claude，选择蓝鲸少女不会连接 DeepSeek，选择星喵少女不会连接 Gemini。当前公开版只读取 Codex 账号额度。
+四位拟人主题不是模型公司的官方角色，不代表 OpenAI、Anthropic、DeepSeek、Google 或社区作者对余量的认可。选择角色只改变外观与互动，不改变额度来源：选择橘光学姐不会连接 Claude，选择蓝鲸少女不会连接 DeepSeek，选择星喵少女不会连接 Gemini。v0.16.0 可在设置中独立选择 Codex 或 Claude 数据源。Codex 复用官方 CLI 登录；Claude 需要在应用内完成官网登录，Google 等登录可使用独立官网子窗口，返回连接窗口后前往 Settings → Usage，再手动开启 60 秒读取，仅展示可见额度与重置信息。未提供的 Token 不推算；Claude 尚未完成真实账号端到端验收，官网可能限制内嵌浏览器登录。角色主题本身不构成服务连接或官方联名。
 
 ## 未包含的历史素材
 

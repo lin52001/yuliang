@@ -21,7 +21,7 @@ struct DesktopShellCheck {
     static func main() {
         do {
             try runChecks()
-            print("PASS desktop shell: independent readable settings panel, persistent continuous controls and callbacks, fixed widget-sized card/Duo styles, icon-only menu status, borderless, shared model, free drag/position lock, visible native character picker, independent Token display, light/dark/system appearance, popover lifecycle, stable geometry, desktop level, hide/recall; collector stayed paused")
+            print("PASS desktop shell: native background right-click settings without permanent desktop buttons, persistent continuous controls and companion/color persistence callbacks, independent theme/color radio groups and automatic/forced native material states, Codex/Claude source persistence and rendered Token separation, fixed widget-sized card/Duo styles, icon-only menu status, borderless, shared model, free drag/position lock, visible native character picker, independent Token display, light/dark/system appearance, popover lifecycle, stable geometry, desktop level, hide/recall; both collectors stayed paused; compositor color visually verified separately")
             exit(0)
         } catch {
             fputs("FAIL desktop shell: \(error)\n", stderr)
@@ -198,12 +198,41 @@ struct DesktopShellCheck {
     @MainActor
     private static func openSettings(on desktop: NSPanel) throws -> NSPanel {
         guard let content = desktop.contentView,
-              let trigger = descendant(content, identifier: "yuliang.settings.button") as? NSButton else {
-            throw ShellCheckFailure(description: "desktop has no native settings trigger")
+              let receiver = descendant(content, identifier: "yuliang.widget.contextMenu") as? StandaloneWidgetContextMenu.ContextView else {
+            throw ShellCheckFailure(description: "desktop has no native background contextual settings receiver")
         }
-        try require(trigger.title == "设置" && trigger.bounds.width >= 36 && trigger.bounds.height >= 18,
-                    "settings trigger lost its readable title or usable hit region")
-        trigger.performClick(nil)
+        try require(descendant(content, identifier: "yuliang.settings.button") == nil,
+                    "desktop retained a permanent settings button instead of its background context menu")
+        try require(receiver.bounds.width >= desktop.contentLayoutRect.width - 2
+                    && receiver.bounds.height >= desktop.contentLayoutRect.height - 2,
+                    "native contextual settings receiver does not cover the whole widget")
+        let point = receiver.convert(NSPoint(x: 8, y: 8), to: nil)
+        guard let event = NSEvent.mouseEvent(with: .rightMouseDown, location: point, modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: desktop.windowNumber,
+            context: nil, eventNumber: 1, clickCount: 1, pressure: 1) else {
+            throw ShellCheckFailure(description: "could not create this process's own contextual settings event")
+        }
+        try require(receiver.acceptsFirstMouse(for: event) && receiver.acceptsContextClick(event, at: point),
+                    "widget background rejected its native right-click receiver")
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseDragged, .leftMouseUp] {
+            guard let ordinary = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: desktop.windowNumber,
+                context: nil, eventNumber: 2, clickCount: 1, pressure: 1) else {
+                throw ShellCheckFailure(description: "could not create a local ordinary mouse event")
+            }
+            try require(!receiver.acceptsContextClick(ordinary, at: point),
+                        "background context surface intercepted an ordinary tap or drag")
+        }
+        if let buddy = descendant(content, identifier: "yuliang.buddy.contextMenu") {
+            let buddyPoint = buddy.convert(NSPoint(x: buddy.bounds.midX, y: buddy.bounds.midY), to: nil)
+            try require(!receiver.acceptsContextClick(event, at: buddyPoint),
+                        "background settings intercepted the character's own context interaction")
+        }
+        let outside = receiver.convert(NSPoint(x: -10, y: -10), to: nil)
+        try require(!receiver.acceptsContextClick(event, at: outside),
+                    "background settings accepted a click beyond the real widget bounds")
+        // Direct delivery to our own NSView, with no global event posting.
+        receiver.rightMouseDown(with: event)
         settle(0.2)
         return try settingsPanel()
     }
@@ -249,7 +278,7 @@ struct DesktopShellCheck {
             model.now = Date()
             settle(0.3)
         }
-        for id in ["styles", "display", "appearance", "windows", "characters", "interactions"] {
+        for id in ["sources", "styles", "display", "appearance", "windows", "characters", "interactions"] {
             _ = try settingsButton("nav." + id, in: panel)
         }
         try pressSetting("nav.styles", in: panel)
@@ -357,7 +386,273 @@ struct DesktopShellCheck {
         settle(0.15)
         try require(StandaloneSettingsPresenter.shellTestPanel == nil && !StandaloneMenuTracking.isActive,
                     "contextual interaction panel did not close through native Escape cancellation")
+        if capturePages,
+           let receiver = descendant(content, identifier: "yuliang.widget.contextMenu") as? StandaloneWidgetContextMenu.ContextView {
+            let point = receiver.convert(NSPoint(x: 8, y: 8), to: nil)
+            guard let controlClick = NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: [.control],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: desktop.windowNumber,
+                context: nil, eventNumber: 3, clickCount: 1, pressure: 1) else {
+                throw ShellCheckFailure(description: "could not construct a local Control-click event")
+            }
+            try require(receiver.acceptsContextClick(controlClick, at: point),
+                        "background settings rejected macOS Control-click")
+            receiver.mouseDown(with: controlClick)
+            settle(0.2)
+            let controlPanel = try settingsPanel()
+            _ = try settingsButton("nav.sources", in: controlPanel)
+            try pressSetting("close", in: controlPanel, staysOpen: false)
+            try require(receiver.accessibilityPerformShowMenu(), "public AXShowMenu did not dispatch contextual settings")
+            settle(0.2)
+            let accessiblePanel = try settingsPanel()
+            _ = try settingsButton("nav.appearance", in: accessiblePanel)
+            try pressSetting("close", in: accessiblePanel, staysOpen: false)
+        }
         print("Persistent settings panel verified: \(prefix), complete titles, continuous selections and six model publications")
+    }
+
+    @MainActor
+    private static func checkClaudeSources(model: StandaloneModel, shell: StandaloneAppDelegate,
+                                          tokens: TokenUsageSnapshot) throws {
+        let desktop = shell.shellTestPanel
+        let records = model.document.records
+        let preferences = model.document.preferences
+        let style = model.displayStyle
+        let appearance = model.appearance
+        let companion = model.companionEnabled
+        let daily = model.showDailyTokens
+        let lifetime = model.showLifetimeTokens
+        let companionCallback = model.onCompanionChange
+        let connectCallback = model.onConnectClaude
+        var companionCallbacks: [Bool] = []
+        var connectCallbacks = 0
+        model.onCompanionChange = { value in
+            companionCallbacks.append(value)
+            companionCallback?(value)
+        }
+        // Verify the real source-page button's dispatch without opening a real
+        // account page or starting network access from this synthetic harness.
+        model.onConnectClaude = { connectCallbacks += 1 }
+        defer {
+            StandaloneSettingsPresenter.close()
+            model.onConnectClaude = connectCallback
+            model.onCompanionChange = companionCallback
+            model.companionEnabled = companion
+            model.showDailyTokens = daily
+            model.showLifetimeTokens = lifetime
+            model.displayStyle = style
+            model.appearance = appearance
+            model.preference { $0 = preferences }
+            model.buddyActivity = nil
+            settle(0.3)
+        }
+        guard let content = desktop.contentView else {
+            throw ShellCheckFailure(description: "source test has no actual desktop view")
+        }
+        // Establish this test's own baseline independently of earlier display
+        // switches, and restore the caller's settings in the defer above.
+        model.selectProvider(.codex)
+        model.showDailyTokens = true
+        model.showLifetimeTokens = true
+        settle(0.3)
+        // Earlier positive pixel-difference checks prove both Codex Token rows
+        // are rendered. Here the same switches must leave Claude's pixels
+        // unchanged. SwiftUI virtual AX text is inspected through CUA during
+        // interactive acceptance; this own-process harness cannot expose it
+        // reliably when macOS has not enabled enhanced accessibility.
+        try require(model.showDailyTokens && model.showLifetimeTokens && model.collector.tokenUsage == tokens,
+                    "source check did not retain both independent Codex Token readings")
+        let panel = try openSettings(on: desktop)
+        try pressSetting("nav.sources", in: panel)
+        _ = try settingsButton("source.connectClaude", in: panel)
+        _ = try settingsButton("source.details", in: panel)
+        for provider in [QuotaProvider.claude, .codex, .claude] {
+            try pressSetting("source." + provider.rawValue, in: panel)
+            let stored = try model.store.read()
+            try require(model.document.preferences.providerId == provider && stored.preferences.providerId == provider,
+                        "source selection did not persist its actual provider: \(provider.rawValue)")
+            for choice in [QuotaProvider.codex, .claude] {
+                let button = try settingsButton("source." + choice.rawValue, in: panel)
+                try require(button.state == (choice == provider ? .on : .off),
+                            "source selection lost the visible radio state: \(choice.rawValue)")
+            }
+            let label = shell.shellTestStatusButton?.accessibilityLabel() ?? ""
+            let tooltip = shell.shellTestStatusButton?.toolTip ?? ""
+            try require(label.contains(provider.name) && tooltip.contains(provider.name),
+                        "real status-item label and tooltip retained the previous provider")
+            if provider == .claude {
+                let presentation = QuotaPresentation(document: model.document, now: model.now)
+                try require(presentation.provider == .claude && presentation.remainingPercent == 72
+                            && model.windows.contains(where: { $0.id == "weekly" && $0.remainingPercent == 39 }),
+                            "Claude card did not receive its own synthetic windows")
+                let enabled = try render(content, named: "native-claude-card-token-settings-on.png")
+                model.showDailyTokens = false
+                model.showLifetimeTokens = false
+                settle(0.2)
+                let disabled = try render(content, named: "native-claude-card-token-settings-off.png")
+                try require(pixelDifference(enabled, disabled) < 0.001,
+                            "Codex Token switches altered the actual Claude rendering")
+                model.showDailyTokens = true
+                model.showLifetimeTokens = true
+                settle(0.2)
+                try require(model.showDailyTokens && model.showLifetimeTokens && model.collector.tokenUsage == tokens,
+                            "switching sources erased the independently enabled Codex Token settings or readings")
+            }
+            try require(desktop.frame.size == expectedCardSize && StandaloneSettingsPresenter.shellTestPanel === panel,
+                        "continuous source choices resized the widget or replaced the settings session")
+        }
+        // Publications from the other reader cannot dismiss the source page or
+        // leak its counters into Claude's selected view.
+        let beforeOtherPublication = try render(content, named: "native-claude-before-codex-publication.png")
+        for _ in 0..<3 {
+            model.collector.shellTestSetTokenUsage(tokens)
+            model.now = Date()
+            settle(0.2)
+            try require(StandaloneSettingsPresenter.shellTestPanel === panel && isOnScreen(panel),
+                        "a Codex publication dismissed source settings")
+        }
+        let afterOtherPublication = try render(content, named: "native-claude-after-codex-publication.png")
+        try require(pixelDifference(beforeOtherPublication, afterOtherPublication) < 0.001,
+                    "a Codex publication changed Claude's actual rendered information")
+        try pressSetting("source.connectClaude", in: panel)
+        try require(connectCallbacks == 1 && model.document.preferences.providerId == .claude,
+                    "real Claude connect setting did not dispatch the selected provider callback once")
+        if let body = panel.contentView { try render(body, named: "native-settings-sources-claude.png") }
+        model.appearance = .light
+        settle(0.2)
+        try render(content, named: "native-claude-card-light.png")
+        model.buddyActivity = nil
+        model.displayStyle = .duo
+        model.appearance = .dark
+        settle(0.35)
+        try require(desktop.frame.size == expectedDuoSize, "Claude Duo changed its fixed size")
+        let duoEnabled = try render(content, named: "native-claude-duo-dark.png")
+        model.showDailyTokens = false
+        model.showLifetimeTokens = false
+        settle(0.2)
+        let duoDisabled = try render(content, named: "native-claude-duo-token-settings-off.png")
+        try require(pixelDifference(duoEnabled, duoDisabled) < 0.001,
+                    "Codex Token switches altered the actual Claude Duo rendering")
+        model.showDailyTokens = true
+        model.showLifetimeTokens = true
+        model.displayStyle = .card
+        settle(0.3)
+        try pressSetting("back", in: panel)
+        try pressSetting("nav.display", in: panel)
+        let choice = try settingsButton("display.companion", in: panel)
+        try require(choice.state == (companion ? .on : .off), "autonomous companion setting lost its selected state")
+        try pressSetting("display.companion", in: panel)
+        try pressSetting("display.companion", in: panel)
+        try require(model.companionEnabled == companion && companionCallbacks == [!companion, companion],
+                    "continuous autonomous-companion choices did not dispatch both persistence callbacks")
+        try require(model.document.records == records && model.collector.tokenUsage == tokens
+                    && !model.collector.isRunning && !model.collector.isBusy && model.collector.lastAttemptAt == nil
+                    && !model.claudeCollector.isRunning && !model.claudeCollector.isBusy
+                    && model.claudeCollector.lastAttemptAt == nil && model.claudeCollector.webView.url == nil,
+                    "source or companion controls mutated readings or started account/network access")
+        print("Synthetic source settings verified: persistent Claude/Codex selection, rendered Token isolation, companion persistence callbacks; rail click/virtual AX accepted separately through CUA")
+    }
+
+    @MainActor
+    private static func checkWidgetColors(model: StandaloneModel, shell: StandaloneAppDelegate,
+                                          tokens: TokenUsageSnapshot) throws {
+        let desktop = shell.shellTestPanel
+        let originalColor = model.widgetColorStyle
+        let originalForeground = model.desktopIsForeground
+        let originalAppearance = model.appearance
+        let originalCompanion = model.companionEnabled
+        let callback = model.onWidgetColorChange
+        let records = model.document.records
+        let preferences = model.document.preferences
+        let presentation = QuotaPresentation(document: model.document, now: model.now)
+        let geometry = desktop.frame
+        let menuSize = shell.shellTestPopover.contentSize
+        var changes: [StandaloneWidgetColorStyle] = []
+        model.onWidgetColorChange = { style in changes.append(style); callback?(style) }
+        model.companionEnabled = false
+        model.buddyActivity = nil
+        defer {
+            StandaloneSettingsPresenter.close()
+            model.onWidgetColorChange = callback
+            model.widgetColorStyle = originalColor
+            model.desktopIsForeground = originalForeground
+            model.appearance = originalAppearance
+            model.companionEnabled = originalCompanion
+            settle(0.3)
+        }
+        guard let content = desktop.contentView,
+              let material = descendant(content, identifier: "yuliang.widget.material") as? NSVisualEffectView else {
+            throw ShellCheckFailure(description: "desktop is missing its real native widget material")
+        }
+        let panel = try openSettings(on: desktop)
+        try pressSetting("nav.appearance", in: panel)
+        try pressSetting("appearance.light", in: panel)
+        for choice in StandaloneWidgetColorStyle.allCases {
+            _ = try settingsButton("widgetColor." + choice.rawValue, in: panel)
+        }
+        func requireIndependentGroups(color: StandaloneWidgetColorStyle, theme: StandaloneAppearance) throws {
+            for candidate in StandaloneAppearance.allCases {
+                let button = try settingsButton("appearance." + candidate.rawValue, in: panel)
+                try require(button.state == (candidate == theme ? .on : .off),
+                            "changing widget color cancelled or changed the separate light/dark radio selection")
+            }
+            for candidate in StandaloneWidgetColorStyle.allCases {
+                let button = try settingsButton("widgetColor." + candidate.rawValue, in: panel)
+                try require(button.state == (candidate == color ? .on : .off),
+                            "changing light/dark appearance cancelled or changed the separate widget-color radio selection")
+            }
+        }
+        try requireIndependentGroups(color: model.widgetColorStyle, theme: .light)
+        func capture(_ name: String, foreground: Bool) throws {
+            model.desktopIsForeground = foreground
+            settle(0.45)
+            let current = QuotaPresentation(document: model.document, now: model.now)
+            try require(desktop.frame == geometry && shell.shellTestPopover.contentSize == menuSize,
+                        "a foreground/color transition changed the real widget's geometry")
+            try require(model.document.records == records && model.document.preferences == preferences
+                        && current.remainingPercent == presentation.remainingPercent && current.observedAt == presentation.observedAt
+                        && model.collector.tokenUsage == tokens && model.collector.tokenUsageLastSuccessAt == tokens.observedAt,
+                        "a foreground/color transition changed quota, Token readings or their successful observation times")
+            try require(StandaloneSettingsPresenter.shellTestPanel === panel && isOnScreen(panel),
+                        "a foreground/color transition dismissed the continuously open appearance panel")
+            // This native cache documents material/geometry only. cacheDisplay
+            // bypasses SwiftUI compositor color filters; ImageRenderer also
+            // cannot render this NSViewRepresentable tree. Full-color versus
+            // monochrome composition is accepted separately on the real screen.
+            try render(content, named: "native-widget-material-" + name + ".png")
+        }
+        try pressSetting("widgetColor.automatic", in: panel)
+        try requireIndependentGroups(color: .automatic, theme: .light)
+        try capture("automatic-foreground", foreground: true)
+        try require(material.material == .underWindowBackground && material.blendingMode == .behindWindow
+                    && material.state == .active,
+                    "foreground automatic style did not use the active native widget material")
+        try capture("automatic-background", foreground: false)
+        try require(material.state == .inactive, "background automatic style retained the emphasized native material")
+        try pressSetting("widgetColor.fullColor", in: panel)
+        try requireIndependentGroups(color: .fullColor, theme: .light)
+        try capture("fullColor-background", foreground: false)
+        try require(material.state == .active, "forced full color did not preserve its active material in the background")
+        try capture("fullColor-foreground", foreground: true)
+        try require(material.state == .active, "forced full color did not preserve its active native material")
+        try pressSetting("widgetColor.monochrome", in: panel)
+        try requireIndependentGroups(color: .monochrome, theme: .light)
+        try capture("monochrome-foreground", foreground: true)
+        try require(material.state == .inactive, "forced monochrome did not preserve its inactive material in the foreground")
+        try capture("monochrome-background", foreground: false)
+        try require(material.state == .inactive, "forced monochrome did not preserve its inactive native material")
+        try pressSetting("widgetColor.automatic", in: panel)
+        try require(changes == [.automatic, .fullColor, .monochrome, .automatic],
+                    "appearance radio choices did not dispatch every color persistence callback")
+        try requireIndependentGroups(color: .automatic, theme: .light)
+        try pressSetting("appearance.dark", in: panel)
+        try requireIndependentGroups(color: .automatic, theme: .dark)
+        try pressSetting("appearance.light", in: panel)
+        try requireIndependentGroups(color: .automatic, theme: .light)
+        try require(!model.collector.isRunning && model.collector.lastAttemptAt == nil
+                    && !model.claudeCollector.isRunning && model.claudeCollector.lastAttemptAt == nil,
+                    "color/background controls triggered an account query")
+        if let body = panel.contentView { try render(body, named: "native-settings-widget-colors.png") }
+        print("Native widget appearance controls verified: independent radio groups, automatic/forced material states, persistence callbacks and unchanged data/geometry; compositor color requires separate real-screen acceptance")
     }
 
     @MainActor
@@ -394,6 +689,46 @@ struct DesktopShellCheck {
     }
 
     @MainActor
+    private static func renderNewInteractionStages(now: Date, preferences: QuotaPreferences) throws {
+        let examples: [(BuddyAction, QuotaCharacter, TimeInterval)] = [
+            (.nuzzle, .dragonGirl, 0.9), (.sip, .claudeGirl, 1.1), (.stretch, .myMelody, 0.8)
+        ]
+        for dark in [false, true] {
+            let host = NSHostingView(rootView: VStack(alignment: .leading, spacing: 12) {
+                Text("合成互动预览 · 固定阶段")
+                    .font(.system(size: 13, weight: .semibold))
+                ForEach(examples.indices, id: \.self) { index in
+                    let (action, character, elapsed) = examples[index]
+                    let activity = BuddyActivity(action: action, startedAt: now, source: .play)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("\(character.name) · \(action.label) · \(String(format: "%.1f", elapsed))s")
+                            .font(.system(size: 10)).foregroundStyle(.secondary)
+                        QuotaRail(remainingPercent: 68, character: character, frame: 3,
+                                  accent: QuotaPalette.accent(for: character), size: 36,
+                                  activity: activity, activityPreviewElapsed: elapsed,
+                                  onAction: { _ in }, trackHeight: 14)
+                            .frame(height: 42)
+                        Text(activity.caption).font(.system(size: 10)).foregroundStyle(.secondary)
+                    }
+                }
+            }.padding(16).frame(width: expectedCardSize.width).background(QuotaPalette.surface)
+                .environment(\.colorScheme, dark ? .dark : .light))
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: expectedCardSize.width, height: 320),
+                                  styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+            window.contentView = host
+            window.setContentSize(host.fittingSize)
+            window.center()
+            window.orderFrontRegardless()
+            defer { window.close() }
+            settle(0.1)
+            try require(isOnScreen(window), "fixed-elapsed synthetic interaction stages were not rendered on screen")
+            try render(host, named: "native-new-interactions-\(dark ? "dark" : "light").png")
+        }
+    }
+
+    @MainActor
     private static func runChecks() throws {
         try checkDuoGeometry()
         for compact in [true, false] {
@@ -426,6 +761,16 @@ struct DesktopShellCheck {
                     resetAt: syntheticTime.addingTimeInterval(86_400), note: "Synthetic UI fixture only", observedAt: syntheticTime),
             ], id: "synthetic-shell-fixture")
         try model.collector.onSnapshot?(syntheticQuota)
+        let syntheticClaude = SnapshotEnvelope(providerId: .claude, pageKind: "usage", observedAt: syntheticTime,
+            source: "browser", windows: [
+                QuotaWindow(id: "session", label: "当前会话", usedPercent: 28,
+                    resetAt: syntheticTime.addingTimeInterval(10_800), note: "Synthetic Claude UI fixture only", observedAt: syntheticTime),
+                QuotaWindow(id: "weekly", label: "每周全部模型", usedPercent: 61,
+                    resetAt: syntheticTime.addingTimeInterval(172_800), note: "Synthetic Claude UI fixture only", observedAt: syntheticTime),
+                QuotaWindow(id: "sonnet-weekly", label: "每周 Sonnet", usedPercent: nil,
+                    resetAt: nil, note: "Synthetic unknown value only", observedAt: syntheticTime),
+            ], id: "synthetic-claude-shell-fixture")
+        try model.claudeCollector.onSnapshot?(syntheticClaude)
         let syntheticTokens = TokenUsageSnapshot(todayTokens: nil, serverDayTokens: 12_345,
             serverDay: "2026-11-03", lifetimeTokens: 1_234_567, peakDailyTokens: 45_678,
             currentStreakDays: 8, longestStreakDays: 14, longestRunningTurnSec: 540,
@@ -463,13 +808,9 @@ struct DesktopShellCheck {
 
         shell.shellTestShowDesktop()
         settle()
-        if let content = panel.contentView,
-           let trigger = descendant(content, identifier: "yuliang.settings.button") as? NSButton {
-            try require(trigger.title == "设置" && trigger.bounds.width >= 36 && trigger.bounds.height >= 18,
-                        "compact card settings trigger lost its readable title or usable bounds")
-            try checkPersistentSettings(model: model, desktop: panel, tokens: syntheticTokens, prefix: "card", capturePages: true)
-            settle(0.3) // Restore Token preferences before checking fixed widget geometry.
-        } else { throw ShellCheckFailure(description: "compact card has no native settings button") }
+        try checkPersistentSettings(model: model, desktop: panel, tokens: syntheticTokens, prefix: "card", capturePages: true)
+        settle(0.3) // Restore Token preferences before checking fixed widget geometry.
+        try checkWidgetColors(model: model, shell: shell, tokens: syntheticTokens)
         try require(model.desktopVisible && panel.isVisible, "desktop card cannot be shown")
         try require(panel.level == .floating, "default desktop card should be floating")
         let compactHeight = panel.frame.height
@@ -508,6 +849,7 @@ struct DesktopShellCheck {
         try require(abs(panel.frame.height - allTokensHeight) <= 1
                     && abs(shell.shellTestPopover.contentSize.height - allTokensMenuHeight) <= 1,
                     "restoring both Token values changed a widget surface's fixed size")
+        try checkClaudeSources(model: model, shell: shell, tokens: syntheticTokens)
 
         // Changing style resizes the actual native desktop window while the
         // menu popover keeps its full card. Neither surface owns a new reader.
@@ -517,13 +859,8 @@ struct DesktopShellCheck {
         try require(model.displayStyle == .duo, "native Duo style action did not update the shared model")
         try require(panel.frame.size == expectedDuoSize,
                     "Duo did not adopt its fixed 160-by-160-point small-widget size")
-        if let content = panel.contentView,
-           let trigger = descendant(content, identifier: "yuliang.settings.button") as? NSButton {
-            try require(trigger.title == "设置" && trigger.bounds.width >= 36 && trigger.bounds.height >= 18,
-                        "Duo settings trigger inherited an unreadable icon-only frame")
-            try checkPersistentSettings(model: model, desktop: panel, tokens: syntheticTokens, prefix: "duo", capturePages: false)
-            settle(0.3)
-        } else { throw ShellCheckFailure(description: "Duo has no native settings button") }
+        try checkPersistentSettings(model: model, desktop: panel, tokens: syntheticTokens, prefix: "duo", capturePages: false)
+        settle(0.3)
         try require(panel.frame.width * panel.frame.height < beforeDuo.width * beforeDuo.height * 0.55,
                     "Duo desktop footprint is not materially smaller than the compact card")
         try require(abs(panel.frame.maxY - beforeDuo.maxY) <= 1 && abs(panel.frame.minX - beforeDuo.minX) <= 1,
@@ -627,6 +964,7 @@ struct DesktopShellCheck {
                     "settings interaction panel modified account readings or their successful observation time")
         model.buddyActivity = nil
         try renderGaugeBoundaries(now: syntheticTime, preferences: model.document.preferences)
+        try renderNewInteractionStages(now: syntheticTime, preferences: model.document.preferences)
 
         model.appearance = .light
         model.onConnect?()
@@ -794,6 +1132,12 @@ struct DesktopShellCheck {
         shell.shellTestTogglePopover()
         settle(0.4)
         try require(shell.shellTestPopover.isShown, "menu-bar popover did not open")
+        guard let menuContent = shell.shellTestPopover.contentViewController?.view,
+              let menuSettings = descendant(menuContent, identifier: "yuliang.settings.button") as? NSButton else {
+            throw ShellCheckFailure(description: "visible menu-bar popover lost its explicit settings button")
+        }
+        try require(menuSettings.title == "设置" && menuSettings.isEnabled && menuSettings.bounds.width >= 36,
+                    "menu-bar settings button lost its complete title or usable target")
         try require(panel.isVisible && model.desktopVisible, "opening popover hid the desktop card")
         model.positionLocked = true
         settle()
@@ -831,5 +1175,8 @@ struct DesktopShellCheck {
         model.desktopVisible = false
         settle()
         try require(!panel.isVisible && !model.collector.isRunning, "last card hiding should only affect visibility")
+        try require(!model.claudeCollector.isRunning && !model.claudeCollector.isBusy
+                    && model.claudeCollector.lastAttemptAt == nil && model.claudeCollector.webView.url == nil,
+                    "desktop shell lifecycle unexpectedly started Claude login or collection")
     }
 }

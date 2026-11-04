@@ -38,7 +38,7 @@ enum QuotaPalette {
     }
 }
 
-enum BuddyActivitySource: Equatable { case usage, play }
+enum BuddyActivitySource: Equatable { case usage, play, companion }
 
 /// Shared by both surfaces. Opening a second view does not restart the event.
 struct BuddyActivity: Equatable {
@@ -63,6 +63,10 @@ struct BuddyActivity: Equatable {
         case .jump: return "蹦一下，继续加油"
         case .dance: return "跟着节拍摇摇摆"
         case .spin: return "转一圈，元气回来啦"
+        case .stretch: return "伸个懒腰，肩膀放松一点"
+        case .nuzzle: return "靠近一点，陪着你就很好"
+        case .peek: return "探个头，看看你有没有想我"
+        case .sip: return "碰个杯，你也喝口水吧"
         }
     }
 }
@@ -340,7 +344,7 @@ private struct QuotaCardContent: View, Animatable {
             QuotaRail(remainingPercent: remaining, character: document.preferences.character, frame: frame,
                       accent: accent, size: slim ? 36 : compact ? 48 : 56, resourceBundle: resourceBundle,
                       onPat: onPat, widgetInteraction: widgetInteraction, activity: activity, activityPreviewElapsed: activityPreviewElapsed,
-                      onAction: onAction, trackHeight: slim ? 12 : nil)
+                      onAction: onAction, trackHeight: slim ? 14 : nil)
                 .frame(height: slim ? 36 : compact ? 48 : 56)
             if !minimal && !compact { Text(title).font(.system(size: 12, weight: .medium)).lineLimit(1) }
             if !minimal { HStack(alignment: .firstTextBaseline) {
@@ -392,6 +396,10 @@ struct QuotaRail: View {
     var trackHeight: CGFloat?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
+    // The explicit wrapper alias also works with Command Line Tools whose SDK
+    // exposes the newer State macro without bundling its compiler plugin.
+    private typealias HoverState = SwiftUI.State<CGFloat?>
+    @HoverState private var hoverX: CGFloat? = nil
 
     init(remainingPercent: Double?, character: QuotaCharacter, frame: Int, accent: Color,
          size: CGFloat, resourceBundle: Bundle = .main, onPat: (() -> Void)? = nil,
@@ -453,36 +461,98 @@ struct QuotaRail: View {
         .accessibilityElement(children: .contain)
     }
 
-    /// Continuous fill stays measurable; the quiet quarter marks are scale, not
-    /// separate buckets. The end pin and character use the existing geometry.
+    /// One continuous, measured ribbon. Stars are touch targets and scale marks,
+    /// never editable quota. Its moving character still uses the same geometry.
     private func refinedTrack(_ layout: QuotaRailGeometry, height: CGFloat) -> some View {
         ZStack(alignment: .leading) {
-            Capsule().fill(QuotaPalette.track)
-            Capsule().strokeBorder(accent.opacity(colorScheme == .dark ? 0.20 : 0.10), lineWidth: 0.5)
+            Capsule().fill(accent.opacity(colorScheme == .dark ? 0.11 : 0.065))
+                .overlay { Capsule().strokeBorder(accent.opacity(colorScheme == .dark ? 0.24 : 0.13), lineWidth: 0.5) }
             if layout.isKnown {
-                Capsule().fill(accent.opacity(colorScheme == .dark ? 0.72 : 0.58))
+                Capsule().fill(LinearGradient(stops: [
+                    .init(color: accent.opacity(colorScheme == .dark ? 0.36 : 0.28), location: 0),
+                    .init(color: accent.opacity(colorScheme == .dark ? 0.75 : 0.68), location: 0.72),
+                    .init(color: accent.opacity(colorScheme == .dark ? 0.92 : 0.86), location: 1),
+                ], startPoint: .leading, endPoint: .trailing))
                     .overlay(alignment: .top) {
-                        Capsule().fill(QuotaPalette.surface.opacity(colorScheme == .dark ? 0.12 : 0.40))
-                            .frame(height: 1).padding(.horizontal, 3).padding(.top, 1.5)
+                        Capsule().fill(Color.white.opacity(colorScheme == .dark ? 0.18 : 0.55))
+                            .frame(height: 1).padding(.horizontal, 5).padding(.top, 2)
                     }
                     .mask(alignment: .leading) { Rectangle().frame(width: layout.fillWidth) }
-                ForEach(1..<4) { quarter in
-                    Capsule().fill(Double(quarter) * 25 <= progress
-                                   ? QuotaPalette.surface.opacity(0.72) : accent.opacity(0.24))
-                        .frame(width: 1, height: 4)
-                        .offset(x: layout.width * Double(quarter) / 4 - 0.5)
+                ForEach(1..<10) { tick in
+                    let reached = Double(tick) * 10 <= progress
+                    if tick % 2 == 0 {
+                        Image(systemName: "sparkle")
+                            .font(.system(size: 5.5, weight: .semibold))
+                            .foregroundStyle(reached ? Color.white.opacity(0.82) : accent.opacity(0.28))
+                            .frame(width: 7, height: 7)
+                            .offset(x: layout.width * Double(tick) / 10 - 3.5)
+                    } else {
+                        Capsule().fill(reached ? Color.white.opacity(0.42) : accent.opacity(0.16))
+                            .frame(width: 0.7, height: 2.5)
+                            .offset(x: layout.width * Double(tick) / 10 - 0.35)
+                    }
                 }
                 if progress > 0 {
-                    Circle().fill(QuotaPalette.surface)
-                        .overlay { Circle().stroke(accent.opacity(0.85), lineWidth: 1) }
-                        .frame(width: 6, height: 6)
-                        .offset(x: min(max(0, layout.width - 6), max(0, layout.fillWidth - 3)))
+                    Circle().fill(Color.white.opacity(0.92))
+                        .overlay { Circle().stroke(accent.opacity(0.7), lineWidth: 0.75) }
+                        .shadow(color: accent.opacity(0.45), radius: 3)
+                        .frame(width: 5, height: 5)
+                        .offset(x: min(max(0, layout.width - 5), max(0, layout.fillWidth - 2.5)))
                 }
+            }
+            if let hoverX, onAction != nil {
+                Circle().fill(accent.opacity(0.15)).frame(width: 18, height: 18)
+                    .overlay { Image(systemName: "heart.fill").font(.system(size: 7)).foregroundStyle(accent) }
+                    .offset(x: min(max(0, layout.width - 18), max(0, hoverX - 9)))
             }
         }
         .frame(height: height)
-        .accessibilityHidden(true)
-        .allowsHitTesting(false)
+        .overlay {
+            if let activity, !reduceMotion {
+                if let elapsed = activityPreviewElapsed {
+                    trackResponse(layout, activity: activity, elapsed: elapsed)
+                } else {
+                    TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
+                        trackResponse(layout, activity: activity, elapsed: context.date.timeIntervalSince(activity.startedAt))
+                    }
+                }
+            }
+        }
+        .frame(height: max(22, height))
+        .contentShape(Capsule())
+        .onContinuousHover { phase in
+            switch phase { case .active(let point): hoverX = point.x; case .ended: hoverX = nil }
+        }
+        .gesture(SpatialTapGesture().onEnded { value in
+            guard let onAction else { onPat?(); return }
+            let ratio = value.location.x / max(1, layout.width)
+            let choices: [BuddyAction] = [.peek, .nuzzle, .celebrate, .stretch]
+            onAction(choices[min(3, max(0, Int(ratio * 4)))])
+        })
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("星光额度轨道")
+        .accessibilityValue(isKnown ? "剩余百分之\(Int(progress.rounded()))" : "额度未知")
+        .accessibilityHint(onAction == nil ? "" : "点按与小伙伴互动，额度不会改变")
+        .accessibilityAddTraits(onAction == nil ? [] : .isButton)
+        .accessibilityAction { onAction?(.peek) }
+        .accessibilityIdentifier("yuliang.quota.rail")
+    }
+
+    private func trackResponse(_ layout: QuotaRailGeometry, activity: BuddyActivity, elapsed: TimeInterval) -> some View {
+        let t = min(1, max(0, elapsed / max(0.001, activity.duration)))
+        let visible = elapsed >= 0 && elapsed < activity.duration
+        let ripple = sin(t * .pi)
+        return ZStack(alignment: .leading) {
+            ForEach(0..<3) { index in
+                Image(systemName: index == 1 ? "heart.fill" : "sparkle")
+                    .font(.system(size: index == 1 ? 6 : 5, weight: .semibold))
+                    .foregroundStyle(accent.opacity(0.8))
+                    .offset(x: min(max(4, layout.fillWidth - Double(index + 1) * 15), max(4, layout.width - 8)),
+                            y: -Double(4 + index * 2) * ripple)
+                    .opacity(visible ? ripple : 0)
+            }
+        }.frame(width: layout.width, height: 14, alignment: .leading)
+            .allowsHitTesting(false).accessibilityHidden(true)
     }
     @ViewBuilder func activeBuddy(_ activity: BuddyActivity, elapsed: TimeInterval, size: Double) -> some View {
         let active = elapsed.isFinite && elapsed >= 0 && elapsed < activity.duration
@@ -527,6 +597,10 @@ struct QuotaRail: View {
             angle *= motion.danceAngle / 10
             x = sample.horizontalOffset / 0.055 * motion.danceSway * spriteScale
         case .spin: angle *= motion.spinDirection
+        case .stretch: angle *= motion.napAngle / 5
+        case .nuzzle: angle *= motion.waveAngle / 8; x *= motion.danceSway / 2.4
+        case .peek: angle *= motion.waveAngle / 8
+        case .sip: y *= motion.chewLift
         case .idle: break
         }
         return (angle, x, y, scaleX, scaleY)
@@ -550,6 +624,18 @@ struct QuotaRail: View {
                         .offset(x: (index == 0 ? -1 : 1) * size * 0.36,
                                 y: -size * 0.22 - (reduceMotion ? 0 : 3 * sin(t * .pi * 4 + Double(index) * .pi)))
                 }
+            } else if action == .nuzzle {
+                ForEach(0..<2) { index in
+                    Image(systemName: "heart.fill")
+                        .font(.system(size: size * (index == 0 ? 0.17 : 0.12)))
+                        .offset(x: (index == 0 ? -1 : 1) * size * 0.32,
+                                y: -size * 0.18 - Double(index + 1) * 4 * flourish)
+                }
+            } else if action == .sip {
+                Image(systemName: "cup.and.saucer.fill")
+                    .font(.system(size: size * 0.25))
+                    .rotationEffect(.degrees(reduceMotion ? 0 : -12 * flourish))
+                    .offset(x: size * 0.08, y: size * 0.12 - size * 0.14 * flourish)
             } else {
                 let symbol = action == .pat ? "heart.fill" : action == .wave ? "sparkle" : action == .nap ? "zzz" : action.symbol
                 Image(systemName: symbol)

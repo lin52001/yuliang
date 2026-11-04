@@ -10,7 +10,7 @@ struct BuddyInteractionTests {
         #expect(BuddyAction.interactiveActions.contains(.eating))
         #expect(!BuddyAction.playfulActions.contains(.eating))
         #expect(!BuddyAction.playfulActions.contains(.idle))
-        for action in [BuddyAction.jump, .dance, .spin] {
+        for action in [BuddyAction.jump, .dance, .spin, .stretch, .nuzzle, .peek, .sip] {
             #expect(BuddyAction.playfulActions.contains(action))
             #expect(try JSONDecoder().decode(BuddyAction.self, from: JSONEncoder().encode(action)) == action)
         }
@@ -41,6 +41,23 @@ struct BuddyInteractionTests {
         #expect(halfTurn.rotationDegrees == 180)
         #expect(halfTurn.horizontalOffset == 0)
         #expect(BuddyAction.spin.motionSample(progress: 1) == .rest)
+    }
+
+    @Test func companionMotionsHaveDifferentGesturesAndReturnToRest() {
+        let stretch = BuddyAction.stretch.motionSample(progress: 0.5)
+        #expect(stretch.scaleY > 1 && stretch.scaleX < 1)
+        #expect(stretch.verticalOffset < 0)
+        let nuzzleLeft = BuddyAction.nuzzle.motionSample(progress: 0.25)
+        let nuzzleRight = BuddyAction.nuzzle.motionSample(progress: 0.75)
+        #expect(nuzzleLeft.horizontalOffset > 0 && nuzzleRight.horizontalOffset < 0)
+        let peek = BuddyAction.peek.motionSample(progress: 0.5)
+        #expect(peek.horizontalOffset > 0.04 && peek.scaleX == 1)
+        let sip = BuddyAction.sip.motionSample(progress: 0.5)
+        #expect(sip.rotationDegrees < 0 && sip.horizontalOffset == 0)
+        for action in [BuddyAction.stretch, .nuzzle, .peek, .sip] {
+            #expect(action.motionSample(progress: 0) == .rest)
+            #expect(action.motionSample(progress: 1) == .rest)
+        }
     }
 
     @Test func finiteMotionCannotDriftOrContinueAfterAnInteraction() {
@@ -121,6 +138,26 @@ struct BuddyInteractionTests {
         #expect(BuddyQuotaChange.consumption(from: previous, to: value(used: 22, at: 60, label: "5小时额度")) == nil)
         #expect(BuddyQuotaChange.consumption(from: previous, to: value(used: 22, at: 60, provider: .claude)) == nil)
         #expect(BuddyQuotaChange.consumption(from: value(provider: .claude), to: value(used: 22, at: 60, provider: .claude)) == nil)
+    }
+
+    @Test func claudeKnownWindowsFeedOnlyWithinAnObservedUnchangedCycle() {
+        for (id, label) in [("session", "当前会话"), ("weekly", "每周全部模型"), ("sonnet-weekly", "每周 Sonnet")] {
+            let previous = value(used: 20, window: id, label: label, provider: .claude)
+            let next = value(used: 22.5, at: 60, window: id, label: label, provider: .claude)
+            #expect(BuddyQuotaChange.consumption(from: previous, to: next) == 2.5)
+            #expect(BuddyQuotaChange.consumption(from: previous,
+                to: value(used: 22.5, at: 60, resetOffset: nil, window: id, label: label, provider: .claude)) == nil)
+            #expect(BuddyQuotaChange.consumption(from: previous,
+                to: value(used: 22.5, at: 60, resetOffset: 7_200, window: id, label: label, provider: .claude)) == nil)
+            #expect(BuddyQuotaChange.consumption(from: previous,
+                to: value(used: 10, at: 60, window: id, label: label, provider: .claude)) == nil)
+        }
+        let session = value(used: 20, window: "session", label: "当前会话", provider: .claude)
+        let weekly = value(used: 22, at: 60, window: "weekly", label: "每周全部模型", provider: .claude)
+        #expect(BuddyQuotaChange.consumption(from: session, to: weekly) == nil)
+        #expect(BuddyQuotaChange.consumption(from: value(used: 20, window: "notice", provider: .claude),
+                                           to: value(used: 22, at: 60, window: "notice", provider: .claude)) == nil)
+        #expect(BuddyQuotaChange.consumption(from: session, to: value(used: 22, at: 60)) == nil)
     }
 
     @Test func staleOrResetDueEvidenceCannotFeed() {

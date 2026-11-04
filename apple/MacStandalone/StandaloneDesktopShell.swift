@@ -26,6 +26,7 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
     private var characterHost: NSHostingController<CharacterPickerChrome>!
     private var characterPopover: NSPopover!
     private var browser: NSWindow?
+    private var claudeBrowser: NSWindow?
     private var statusItem: NSStatusItem!
     private var subscriptions = Set<AnyCancellable>()
     private var resizeScheduled = false
@@ -46,7 +47,9 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
             if defaults.object(forKey: "card.positionLocked") != nil { model.positionLocked = defaults.bool(forKey: "card.positionLocked") }
             if defaults.object(forKey: "display.dailyTokens") != nil { model.showDailyTokens = defaults.bool(forKey: "display.dailyTokens") }
             if defaults.object(forKey: "display.lifetimeTokens") != nil { model.showLifetimeTokens = defaults.bool(forKey: "display.lifetimeTokens") }
+            if defaults.object(forKey: "buddy.companion") != nil { model.companionEnabled = defaults.bool(forKey: "buddy.companion") }
             if let raw = defaults.string(forKey: "card.appearance"), let appearance = StandaloneAppearance(rawValue: raw) { model.appearance = appearance }
+            if let raw = defaults.string(forKey: "card.widgetColor"), let style = StandaloneWidgetColorStyle(rawValue: raw) { model.widgetColorStyle = style }
             if let raw = defaults.string(forKey: "card.displayStyle"), let style = StandaloneDisplayStyle(rawValue: raw) { model.displayStyle = style }
         }
         panel = QuotaFloatingPanel(contentRect: NSRect(x: 0, y: 0,
@@ -95,6 +98,8 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
         characterPopover.contentViewController = characterHost
 
         model.onConnect = { [weak self] in self?.openConnection() }
+        model.onConnectClaude = { [weak self] in self?.openClaudeConnection() }
+        model.onCompanionChange = { [weak self] enabled in self?.savePreference(enabled, key: "buddy.companion") }
         model.onChooseCharacter = { [weak self] surface in self?.chooseCharacter(from: surface) }
         model.onPin = { [weak self] pinned in
             self?.applyPin(pinned)
@@ -121,6 +126,10 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
             self.applyAppearance(appearance)
             if self.persistsPreferences { UserDefaults.standard.set(appearance.rawValue, forKey: "card.appearance") }
         }
+        model.onWidgetColorChange = { [weak self] style in
+            guard let self, self.persistsPreferences else { return }
+            UserDefaults.standard.set(style.rawValue, forKey: "card.widgetColor")
+        }
         model.onStyleChange = { [weak self] in
             guard let self else { return }
             self.characterPopover?.close()
@@ -145,6 +154,19 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
         model.$error.sink { [weak self] _ in self?.scheduleResize() }.store(in: &subscriptions)
         model.collector.$status.sink { [weak self] _ in self?.scheduleResize() }.store(in: &subscriptions)
         model.collector.$tokenUsage.sink { [weak self] _ in self?.scheduleResize() }.store(in: &subscriptions)
+        model.claudeCollector.$status.sink { [weak self] _ in self?.scheduleResize() }.store(in: &subscriptions)
+        let workspaceEvents = NSWorkspace.shared.notificationCenter
+        updateDesktopEmphasis()
+        workspaceEvents.publisher(for: NSWorkspace.didActivateApplicationNotification).sink { [weak self] note in
+            let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            self?.updateDesktopEmphasis(frontmost: app)
+        }.store(in: &subscriptions)
+        for name in [NSWorkspace.willSleepNotification, NSWorkspace.sessionDidResignActiveNotification] {
+            workspaceEvents.publisher(for: name).sink { [weak self] _ in self?.model.companionSleeping = true }.store(in: &subscriptions)
+        }
+        for name in [NSWorkspace.didWakeNotification, NSWorkspace.sessionDidBecomeActiveNotification] {
+            workspaceEvents.publisher(for: name).sink { [weak self] _ in self?.model.companionSleeping = false }.store(in: &subscriptions)
+        }
         NotificationCenter.default.publisher(for: StandaloneMenuTracking.didEnd).sink { [weak self] _ in
             self?.updateStatusItem()
             self?.scheduleResize()
@@ -160,6 +182,12 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
         if persistsPreferences { UserDefaults.standard.set(value, forKey: key) }
     }
 
+    private func updateDesktopEmphasis(frontmost: NSRunningApplication? = NSWorkspace.shared.frontmostApplication) {
+        guard let frontmost else { return }
+        model.desktopIsForeground = frontmost.bundleIdentifier == "com.apple.finder"
+            || frontmost.processIdentifier == ProcessInfo.processInfo.processIdentifier
+    }
+
     private func updateStatusItem(document: QuotaStoreDocument? = nil, now: Date? = nil) {
         guard let statusItem else { return }
         let value = QuotaPresentation(document: document ?? model.document, now: now ?? model.now)
@@ -172,7 +200,7 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
         case .resetDue: reading = "上次剩余 \(percent) · 重置待核对"
         }
         let updated = value.observedAt.map { $0.formatted(date: .abbreviated, time: .standard) } ?? "尚未读取"
-        let tooltip = "余量 · Codex\n\(value.window?.label ?? "订阅额度") · \(reading)\n额度更新 \(updated)\n点击查看用量与操作"
+        let tooltip = "余量 · \(value.provider.name)\n\(value.window?.label ?? "订阅额度") · \(reading)\n额度更新 \(updated)\n点击查看用量与操作"
         let signature = "\(model.displayStyle.rawValue)/\(tooltip)"
         guard signature != lastStatusSignature else { return }
         // A fixed/variable-length transition may cause AppKit to refresh the
@@ -181,7 +209,7 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
         if statusItem.length != length { statusItem.length = length }
         guard let button = statusItem.button else { return }
         button.toolTip = tooltip
-        button.setAccessibilityLabel("余量，Codex，\(reading)，点击查看用量与操作")
+        button.setAccessibilityLabel("余量，\(value.provider.name)，\(reading)，点击查看用量与操作")
         if model.displayStyle == .duo {
             button.imagePosition = .imageOnly
             button.title = ""
@@ -232,7 +260,7 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
             return true
         }
         image.isTemplate = true
-        image.accessibilityDescription = "Codex 剩余额度"
+        image.accessibilityDescription = "订阅剩余额度"
         return image
     }
 
@@ -242,6 +270,7 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
         popover?.appearance = appearance.nativeAppearance
         characterPopover?.appearance = appearance.nativeAppearance
         browser?.appearance = appearance.nativeAppearance
+        claudeBrowser?.appearance = appearance.nativeAppearance
         scheduleResize()
     }
 
@@ -324,6 +353,7 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
         guard let panel else { return }
         if visible { panel.orderFrontRegardless() }
         else { panel.orderOut(nil) }
+        model.companionVisible = visible || (popover?.isShown ?? false)
     }
 
     private func showDesktop(reposition: Bool) {
@@ -342,6 +372,7 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
     func applicationWillTerminate(_ notification: Notification) {
         StandaloneSettingsPresenter.close()
         model?.collector.pause()
+        model?.claudeCollector.pause()
     }
 
     @objc private func togglePopover() {
@@ -352,10 +383,13 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
         }
+        model.companionVisible = panel.isVisible || popover.isShown
     }
+    func popoverDidShow(_ notification: Notification) { model.companionVisible = panel.isVisible || popover.isShown }
+    func popoverDidClose(_ notification: Notification) { model.companionVisible = panel.isVisible || popover.isShown }
     @objc private func showPanel() { showDesktop(reposition: true) }
     @objc private func connectAction() { openConnection() }
-    @objc private func refreshAction() { model.collector.refreshNow() }
+    @objc private func refreshAction() { model.refreshSelected() }
 
     private func chooseCharacter(from surface: StandaloneSurface) {
         if characterPopover.isShown { characterPopover.performClose(nil); return }
@@ -387,16 +421,33 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
     private func openConnection() {
         popover.performClose(nil)
         if browser == nil {
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 430, height: 520),
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 430, height: 566),
                                   styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
             window.title = "余量 · 用量与额度"
             window.appearance = model.appearance.nativeAppearance
-            window.contentView = NSHostingView(rootView: StandaloneConnectionView(model: model))
+            window.contentView = NSHostingView(rootView: StandaloneConnectionRootView(model: model))
             window.isReleasedWhenClosed = false
             window.center()
             browser = window
         }
         browser?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func openClaudeConnection() {
+        model.selectProvider(.claude)
+        if claudeBrowser == nil {
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 820, height: 700),
+                                  styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+            window.title = "余量 · 连接 Claude"
+            window.appearance = model.appearance.nativeAppearance
+            window.contentView = NSHostingView(rootView: ClaudeConnectionView(collector: model.claudeCollector))
+            window.minSize = NSSize(width: 740, height: 620)
+            window.isReleasedWhenClosed = false
+            window.center()
+            claudeBrowser = window
+        }
+        claudeBrowser?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 

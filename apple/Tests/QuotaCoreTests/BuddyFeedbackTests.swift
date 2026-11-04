@@ -135,4 +135,35 @@ struct BuddyFeedbackTests {
         #expect(accepted)
         #expect(state.message(at: now, refreshTimeLabel: " \n ").text == "额度已更新")
     }
+
+    @Test func companionWordsYieldToRealRefreshErrorsAndManualPlay() {
+        let moment = BuddyCompanionMoment(action: .nuzzle, caption: "蹭蹭你，给我一点关注嘛")
+        var state = BuddyFeedbackState()
+        let accepted = state.accompany(moment, now: now)
+        #expect(accepted)
+        #expect(state.message(at: now, refreshTimeLabel: "").text == moment.caption)
+        #expect(state.nextTransition(after: now) == now.addingTimeInterval(5.5))
+        #expect(state.message(at: now, refreshTimeLabel: "", error: "读取失败").kind == .error)
+        let refreshed = state.didRefresh(observedAt: now.addingTimeInterval(1), now: now.addingTimeInterval(1))
+        #expect(refreshed)
+        #expect(state.message(at: now.addingTimeInterval(1), refreshTimeLabel: "09:16").kind == .refresh)
+        let duringRefresh = state.accompany(moment, now: now.addingTimeInterval(2))
+        #expect(!duringRefresh)
+        state.interact(.pat, now: now.addingTimeInterval(2))
+        #expect(state.message(at: now.addingTimeInterval(2), refreshTimeLabel: "").kind == .interaction)
+        let duringInteraction = state.accompany(moment, now: now.addingTimeInterval(3))
+        #expect(!duringInteraction)
+        #expect(state.message(at: now.addingTimeInterval(7.5), refreshTimeLabel: "").text != moment.caption)
+        #expect(state.nextTransition(after: now.addingTimeInterval(7.5)) == nil)
+    }
+
+    @Test func invalidOrEmptyCompanionMessagesCannotReplaceExistingFeedback() {
+        var state = BuddyFeedbackState()
+        let original = state
+        let empty = state.accompany(.init(action: .peek, caption: " \n "), now: now)
+        let idle = state.accompany(.init(action: .idle, caption: "你好"), now: now)
+        let invalid = state.accompany(.init(action: .peek, caption: "你好"), now: Date(timeIntervalSinceReferenceDate: .nan))
+        #expect(!empty && !idle && !invalid)
+        #expect(state == original)
+    }
 }

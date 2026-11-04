@@ -29,6 +29,8 @@ public struct BuddyFeedbackState: Equatable, Sendable {
     private var action: BuddyAction = .idle
     private var interactionSequence: Int = 0
     private var encouragementSequence: Int
+    private var companionVisibleUntil: Date?
+    private var companionMessage: BuddyFeedbackMessage?
 
     /// A persisted observation seeds replay protection without showing a refresh.
     public init(variant: Int = 0, observedAt: Date? = nil) {
@@ -59,6 +61,20 @@ public struct BuddyFeedbackState: Equatable, Sendable {
         encouragementSequence &+= 1
     }
 
+    /// Quiet autonomous words cannot interrupt a tap or the real refresh flash.
+    /// A skipped moment is discarded rather than queued for later playback.
+    @discardableResult
+    public mutating func accompany(_ moment: BuddyCompanionMoment, now: Date) -> Bool {
+        let text = moment.caption.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard Self.isFinite(now), moment.action != .idle, !text.isEmpty,
+              interactionVisibleUntil.map({ $0 <= now }) ?? true,
+              refreshVisibleUntil.map({ $0 <= now }) ?? true else { return false }
+        companionMessage = .init(kind: .encouragement, text: text, symbol: moment.action.symbol)
+        companionVisibleUntil = now.addingTimeInterval(Self.interactionDuration)
+        encouragementSequence &+= 1
+        return true
+    }
+
     /// Error visibility is retained; otherwise a tap takes priority over the refresh flash.
     /// Identical calls return identical text, so ticking a clock cannot shuffle the footer.
     public func message(at now: Date, refreshTimeLabel: String, error: String? = nil) -> BuddyFeedbackMessage {
@@ -74,6 +90,7 @@ public struct BuddyFeedbackState: Equatable, Sendable {
             let time = refreshTimeLabel.trimmingCharacters(in: .whitespacesAndNewlines)
             return .init(kind: .refresh, text: time.isEmpty ? "额度已更新" : "刚刚更新 · \(time)", symbol: "arrow.clockwise")
         }
+        if let until = companionVisibleUntil, now < until, let companionMessage { return companionMessage }
         let phrases = Self.phrases(for: .idle)
         return .init(kind: .encouragement,
                      text: phrases[Self.index(encouragementSequence, count: phrases.count)], symbol: "heart")
@@ -84,6 +101,7 @@ public struct BuddyFeedbackState: Equatable, Sendable {
     public func nextTransition(after now: Date) -> Date? {
         if let until = interactionVisibleUntil, until > now { return until }
         if let until = refreshVisibleUntil, until > now { return until }
+        if let until = companionVisibleUntil, until > now { return until }
         return nil
     }
 
@@ -118,6 +136,14 @@ public struct BuddyFeedbackState: Equatable, Sendable {
             ["摇一摇，把紧绷放松一点", "跟着自己的节奏慢慢来", "让心情也松一口气"]
         case .spin:
             ["转个圈，换个轻松的思路", "暂时卡住，也没关系", "换个角度，再试一次"]
+        case .stretch:
+            ["伸伸懒腰，肩膀也放松一点", "舒展一下，再陪你继续", "抬抬手，紧绷可以放下来"]
+        case .nuzzle:
+            ["蹭蹭你，谢谢你陪着我", "借你一点温柔，回你一点元气", "靠近一点点，今天也陪着你"]
+        case .peek:
+            ["探头看看，你已经很认真啦", "我在旁边，给你一点小鼓励", "偷偷看你一眼，继续一起加油"]
+        case .sip:
+            ["干杯，你也记得喝口水", "水杯举起来，照顾好自己", "慢慢喝一口，再继续向前"]
         }
     }
 }
