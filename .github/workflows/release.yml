@@ -91,5 +91,7 @@ jobs:
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" dist-release/*.zip dist-release/SHA256SUMS --clobber --repo "$GITHUB_REPOSITORY"
           else
-            gh release create "$RELEASE_TAG" dist-release/*.zip dist-release/SHA256SUMS --target "$GITHUB_SHA" --title "余量 $RELEASE_TAG" --notes-file CHANGELOG.md --repo "$GITHUB_REPOSITORY"
+            notes_file="RELEASE-${RELEASE_TAG}.md"
+            if [ ! -f "$notes_file" ]; then notes_file=CHANGELOG.md; fi
+            gh release create "$RELEASE_TAG" dist-release/*.zip dist-release/SHA256SUMS --target "$GITHUB_SHA" --title "余量 $RELEASE_TAG" --notes-file "$notes_file" --repo "$GITHUB_REPOSITORY"
           fi

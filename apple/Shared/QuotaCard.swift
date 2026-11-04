@@ -407,7 +407,7 @@ private struct QuotaCardContent: View, Animatable {
             QuotaRail(remainingPercent: remaining, character: document.preferences.character, frame: frame,
                       accent: accent, size: slim ? (compact ? 28 : 36) : compact ? 48 : 56, resourceBundle: resourceBundle,
                       onPat: onPat, widgetInteraction: widgetInteraction, activity: activity, activityPreviewElapsed: activityPreviewElapsed,
-                      onAction: onAction, trackHeight: slim ? (compact ? 8 : 12) : nil)
+                      onAction: onAction, trackHeight: slim ? (compact ? 10 : 12) : nil)
                 .frame(height: slim ? (compact ? 28 : 36) : compact ? 48 : 56)
             if !minimal && !compact { Text(YuliangL10n.text(title)).font(.system(size: 12, weight: .medium)).lineLimit(1) }
             if !minimal { HStack(alignment: .firstTextBaseline) {
@@ -504,43 +504,41 @@ struct QuotaRail: View {
         .accessibilityElement(children: .contain)
     }
 
-    /// One continuous, measured ribbon. Stars are touch targets and scale marks,
-    /// never editable quota. Its moving character still uses the same geometry.
+    /// A glossy ribbon with three little character charms. The decoration
+    /// belongs to the measured track; touching it never edits the quota.
     private func refinedTrack(_ layout: QuotaRailGeometry, height: CGFloat) -> some View {
         ZStack(alignment: .leading) {
-            Capsule().fill(accent.opacity(colorScheme == .dark ? 0.11 : 0.065))
-                .overlay { Capsule().strokeBorder(accent.opacity(colorScheme == .dark ? 0.24 : 0.13), lineWidth: 0.5) }
+            Capsule().fill(accent.opacity(colorScheme == .dark ? 0.13 : 0.075))
+                .overlay { Capsule().strokeBorder(accent.opacity(colorScheme == .dark ? 0.24 : 0.16), lineWidth: 0.6) }
             if layout.isKnown {
                 Capsule().fill(LinearGradient(stops: [
-                    .init(color: accent.opacity(colorScheme == .dark ? 0.36 : 0.28), location: 0),
-                    .init(color: accent.opacity(colorScheme == .dark ? 0.75 : 0.68), location: 0.72),
-                    .init(color: accent.opacity(colorScheme == .dark ? 0.92 : 0.86), location: 1),
+                    .init(color: accent.opacity(colorScheme == .dark ? 0.42 : 0.38), location: 0),
+                    .init(color: accent.opacity(colorScheme == .dark ? 0.78 : 0.75), location: 0.70),
+                    .init(color: accent.opacity(colorScheme == .dark ? 0.96 : 0.92), location: 1),
                 ], startPoint: .leading, endPoint: .trailing))
                     .overlay(alignment: .top) {
                         Capsule().fill(Color.white.opacity(colorScheme == .dark ? 0.18 : 0.55))
-                            .frame(height: 1).padding(.horizontal, 5).padding(.top, 2)
+                            .frame(height: 1).padding(.horizontal, 6).padding(.top, 2)
+                    }
+                    .overlay(alignment: .bottom) {
+                        Capsule().fill(accent.opacity(colorScheme == .dark ? 0.16 : 0.12))
+                            .frame(height: 1.5).padding(.horizontal, 3).padding(.bottom, 0.5)
                     }
                     .mask(alignment: .leading) { Rectangle().frame(width: layout.fillWidth) }
-                ForEach(1..<10) { tick in
-                    let reached = Double(tick) * 10 <= progress
-                    if tick % 2 == 0 {
-                        Image(systemName: character.signatureEffect == .starlight ? "sparkle" : "circle.fill")
-                            .font(.system(size: character.signatureEffect == .starlight ? 5.5 : 2.2, weight: .semibold))
-                            .foregroundStyle(reached ? Color.white.opacity(0.82) : accent.opacity(0.28))
-                            .frame(width: 7, height: 7)
-                            .offset(x: layout.width * Double(tick) / 10 - 3.5)
-                    } else {
-                        Capsule().fill(reached ? Color.white.opacity(0.42) : accent.opacity(0.16))
-                            .frame(width: 0.7, height: 2.5)
-                            .offset(x: layout.width * Double(tick) / 10 - 0.35)
-                    }
+                ForEach(1..<4) { node in
+                    let reached = Double(node) * 25 <= progress
+                    Image(systemName: node == 2 ? "sparkle" : character.signatureSymbol)
+                        .font(.system(size: height < 11 ? 5 : 6, weight: .semibold))
+                        .foregroundStyle(reached ? Color.white.opacity(0.88) : accent.opacity(colorScheme == .dark ? 0.48 : 0.38))
+                        .frame(width: 10, height: height)
+                        .offset(x: layout.width * Double(node) / 4 - 5)
+                        .allowsHitTesting(false).accessibilityHidden(true)
                 }
                 if progress > 0 {
-                    Circle().fill(Color.white.opacity(0.92))
-                        .overlay { Circle().stroke(accent.opacity(0.7), lineWidth: 0.75) }
-                        .shadow(color: accent.opacity(0.45), radius: 3)
-                        .frame(width: 5, height: 5)
-                        .offset(x: min(max(0, layout.width - 5), max(0, layout.fillWidth - 2.5)))
+                    Circle().fill(Color.white.opacity(0.94))
+                        .overlay { Circle().stroke(accent.opacity(0.64), lineWidth: 0.8) }
+                        .frame(width: 5.5, height: 5.5)
+                        .offset(x: min(max(0, layout.width - 5.5), max(0, layout.fillWidth - 2.75)))
                 }
             }
             if let hoverX, onAction != nil {
@@ -894,8 +892,8 @@ struct QuotaDuoGeometry: Equatable {
 
     init(size: CGFloat, remainingPercent: Double?) {
         side = size.isFinite ? max(64, size) : 80
-        ringDiameter = side * 0.60
-        avatarSize = side * 0.275
+        ringDiameter = side * 0.66
+        avatarSize = side * 0.31
         isKnown = remainingPercent.map { $0.isFinite && (0...100).contains($0) } ?? false
         progress = isKnown ? remainingPercent! : 0
         let angle = progress / 100 * .pi * 2 - .pi / 2
@@ -914,7 +912,7 @@ struct QuotaDuoGauge: View {
     var activity: BuddyActivity? = nil
     var activityPreviewElapsed: TimeInterval? = nil
     var onAction: ((BuddyAction) -> Void)? = nil
-    var size: CGFloat = 80
+    var size: CGFloat = 102
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -987,43 +985,53 @@ private struct QuotaDuoGaugeContent: View, Animatable {
 
     var body: some View {
         ZStack {
-            Path { path in
-                let radius = layout.ringDiameter / 2
-                for tick in 0..<12 {
-                    let angle = Double(tick) / 12 * .pi * 2 - .pi / 2
-                    let inner = radius + 4.5
-                    let outer = inner + (tick % 3 == 0 ? 3 : 1.5)
-                    path.move(to: CGPoint(x: layout.side / 2 + inner * cos(angle),
-                                          y: layout.side / 2 + inner * sin(angle)))
-                    path.addLine(to: CGPoint(x: layout.side / 2 + outer * cos(angle),
-                                             y: layout.side / 2 + outer * sin(angle)))
-                }
-            }.stroke(accent.opacity(layout.isKnown ? 0.30 : 0.16),
-                     style: StrokeStyle(lineWidth: 0.8, lineCap: .round))
-                .accessibilityHidden(true).allowsHitTesting(false)
-            Circle().stroke(QuotaPalette.track, lineWidth: 5)
+            Circle().stroke(accent.opacity(colorScheme == .dark ? 0.16 : 0.11), lineWidth: 6.5)
                 .frame(width: layout.ringDiameter, height: layout.ringDiameter)
-                .accessibilityHidden(true)
+                .contentShape(Circle())
+                .onTapGesture { onAction?(document.preferences.character.signatureAction) }
+                .accessibilityLabel(YuliangL10n.text("星光额度轨道"))
+                .accessibilityHint(onAction == nil ? "" : YuliangL10n.text("点按与小伙伴互动，额度不会改变"))
+                .accessibilityAddTraits(onAction == nil ? [] : .isButton)
             if layout.isKnown {
                 Circle().trim(from: 0, to: layout.progress / 100)
-                    .stroke(accent.opacity(presentation.freshness == .fresh ? 0.90 : 0.48),
-                            style: StrokeStyle(lineWidth: 5, lineCap: .round))
+                    .stroke(AngularGradient(colors: [accent.opacity(0.52), accent.opacity(0.9), accent],
+                                            center: .center, startAngle: .degrees(0), endAngle: .degrees(360)),
+                            style: StrokeStyle(lineWidth: 6.5, lineCap: .round))
+                    .opacity(presentation.freshness == .fresh ? 1 : 0.53)
                     .rotationEffect(.degrees(-90))
                     .frame(width: layout.ringDiameter, height: layout.ringDiameter)
-                    .accessibilityHidden(true)
-                Circle().trim(from: 0, to: layout.progress / 100)
-                    .stroke(QuotaPalette.surface.opacity(colorScheme == .dark ? 0.18 : 0.46),
-                            style: StrokeStyle(lineWidth: 0.7, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-                    .frame(width: layout.ringDiameter - 2, height: layout.ringDiameter - 2)
                     .accessibilityHidden(true).allowsHitTesting(false)
+                Circle().trim(from: 0, to: layout.progress / 100)
+                    .stroke(Color.white.opacity(colorScheme == .dark ? 0.17 : 0.42),
+                            style: StrokeStyle(lineWidth: 0.8, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                    .frame(width: layout.ringDiameter - 2.5, height: layout.ringDiameter - 2.5)
+                    .accessibilityHidden(true).allowsHitTesting(false)
+                ForEach(1..<4) { node in
+                    let angle = Double(node) / 4 * .pi * 2 - .pi / 2
+                    Image(systemName: node == 2 ? "sparkle" : document.preferences.character.signatureSymbol)
+                        .font(.system(size: 5, weight: .semibold))
+                        .foregroundStyle(Double(node) * 25 <= layout.progress
+                                         ? Color.white.opacity(0.88) : accent.opacity(0.46))
+                        .frame(width: 8, height: 8)
+                        .position(x: layout.side / 2 + layout.ringDiameter / 2 * cos(angle),
+                                  y: layout.side / 2 + layout.ringDiameter / 2 * sin(angle))
+                        .accessibilityHidden(true).allowsHitTesting(false)
+                }
                 VStack(spacing: 0) {
                     Text(String(format: "%.0f%%", layout.progress))
-                        .font(.system(size: layout.side * 0.20, weight: .semibold, design: .rounded))
+                        .font(.system(size: layout.side * 0.18, weight: .semibold, design: .rounded))
                         .monospacedDigit()
+                        .lineLimit(1).minimumScaleFactor(0.8)
                         .accessibilityLabel(YuliangL10n.format("剩余百分之{0}", String(Int(layout.progress.rounded()))))
                     Text(YuliangL10n.text(readingLabel)).font(.system(size: 8, weight: .medium)).foregroundStyle(.secondary)
-                }.foregroundStyle(QuotaPalette.ink)
+                }.frame(width: layout.side * 0.46)
+                    // Keep a small breathing space beside the larger orbiting
+                    // buddy, including the three-digit 100% readout.
+                    .offset(x: -(layout.markerX - layout.side / 2) * 0.16,
+                            y: -(layout.markerY - layout.side / 2) * 0.12)
+                    .foregroundStyle(QuotaPalette.ink)
+                    .allowsHitTesting(false)
                 animatedBuddy.position(x: layout.markerX, y: layout.markerY)
             } else {
                 VStack(spacing: 0) {

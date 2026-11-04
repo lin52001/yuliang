@@ -1087,13 +1087,14 @@ struct StandalonePanelView: View {
                     .foregroundStyle(message.kind == .error ? Color.secondary : accent)
                     .accessibilityHidden(true)
                 Text(YuliangL10n.text(message.text))
-                    .font(.system(size: model.compact && !isDuo ? 10 : 11, weight: message.kind == .interaction ? .medium : .regular))
+                    .font(.system(size: model.compact || isDuo ? 10 : 11, weight: message.kind == .interaction ? .medium : .regular))
                     .foregroundStyle(message.kind == .interaction ? Color.primary : Color.secondary)
                     .lineLimit(isDuo ? 2 : 1)
                     .multilineTextAlignment(isDuo ? .center : .leading)
+                    .fixedSize(horizontal: false, vertical: isDuo)
                     .contentTransition(.opacity)
             }
-            .frame(maxWidth: .infinity, minHeight: isDuo ? 26 : model.compact ? 18 : 22, maxHeight: isDuo ? 26 : model.compact ? 18 : 22,
+            .frame(maxWidth: .infinity, minHeight: isDuo ? 24 : model.compact ? 18 : 22, maxHeight: isDuo ? 24 : model.compact ? 18 : 22,
                    alignment: isDuo ? .center : .leading)
             .contentShape(Rectangle())
         }
@@ -1118,16 +1119,16 @@ struct StandalonePanelView: View {
                     ProviderBrandMark(provider: presentation.provider, size: 11)
                     Text(presentation.provider.name).font(.system(size: 11, weight: .semibold))
                 }.frame(maxWidth: .infinity, alignment: .leading)
-                    .frame(height: 16)
+                    .frame(height: 14)
                     .overlay {
                         WindowDragHandle(locked: model.positionLocked)
                             .help(model.positionLocked ? YuliangL10n.text("位置已锁定") : YuliangL10n.text("拖动小组件"))
                     }
-            }.foregroundStyle(.secondary).frame(height: 16)
+            }.foregroundStyle(.secondary).frame(height: 14)
             QuotaDuoGauge(document: model.document, now: model.now, reaction: model.reaction,
                           onPat: model.pat, animateChanges: model.animateQuota,
-                          activity: model.buddyActivity, onAction: model.play, size: 86)
-                .frame(height: 86)
+                          activity: model.buddyActivity, onAction: model.play, size: 102)
+                .frame(height: 102)
             HStack(spacing: 8) {
                 if presentation.provider == .claude {
                     Text(YuliangL10n.text(presentation.window?.label ?? YuliangL10n.text("待连接")))
@@ -1138,9 +1139,9 @@ struct StandalonePanelView: View {
                 if presentation.provider == .codex && model.showLifetimeTokens {
                     duoToken(YuliangL10n.text("累计"), value: collector.tokenUsage?.lifetimeTokens, daily: false)
                 }
-            }.frame(height: 14)
+            }.frame(height: 12)
             feedbackFooter
-        }.padding(.horizontal, 10).padding(.vertical, 9)
+        }.padding(.horizontal, 10).padding(.top, 6).padding(.bottom, 2)
     }
 
     private var claudeWindowStrip: some View {
@@ -1203,9 +1204,15 @@ struct StandalonePanelView: View {
                     if outdated { Image(systemName: "clock.badge.exclamationmark") }
                 }.font(.system(size: 9)).foregroundStyle(.secondary).lineLimit(1)
                 HStack(alignment: .firstTextBaseline, spacing: 3) {
-                    Text(TokenUsageFormat.compact(value)).font(.system(size: model.compact ? 14 : 17, weight: .semibold, design: .rounded))
+                    // These are already short values (for example 12.3K).
+                    // Preserve their intrinsic width when a layout/theme
+                    // transition remeasures the flexible two-column row.
+                    Text(TokenUsageFormat.compact(value)).font(.system(size: 17, weight: .semibold, design: .rounded))
+                        .fixedSize(horizontal: true, vertical: false).layoutPriority(1)
                     Text("Token").font(.system(size: 9)).foregroundStyle(.secondary)
-                }.monospacedDigit().lineLimit(1).minimumScaleFactor(0.8)
+                        .fixedSize(horizontal: true, vertical: false)
+                }.monospacedDigit().lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
         }
         .help("\(daily ? YuliangL10n.text("服务端日统计，时区未注明") : YuliangL10n.text("账号累计统计")) · \(TokenUsageFormat.exact(value))\n\(YuliangL10n.text(collector.tokenUsageStatus)) · \(YuliangL10n.format("更新 {0}", timestamp))")

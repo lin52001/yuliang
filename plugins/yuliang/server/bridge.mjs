@@ -11,10 +11,17 @@ const executeFile = promisify(execFile);
 const MAX_REQUEST_BYTES = 16 * 1024;
 const MAX_RESPONSE_BYTES = 128 * 1024;
 const MAX_WAIT_MS = 12_000;
+const WARM_RESPONSE_WAIT_MS = 1_000;
+const APP_BUNDLE_ID = 'com.yuliang.quota.standalone';
 const OWNER_UID = process.getuid?.();
 
 export class BridgeError extends Error {
   constructor(code, message) { super(message); this.name = 'BridgeError'; this.code = code; }
+}
+
+export function bridgePermissionError(error) {
+  if (!['EACCES', 'EPERM', 'bridge_permission_denied'].includes(error?.code)) return undefined;
+  return new BridgeError('bridge_permission_denied', '当前本机执行环境的权限受限，无法访问余量连接目录。请为本次余量本地命令请求必要的本机执行权限后重试；无需重新安装 App 或更改目录权限。');
 }
 
 export function defaultBridgeDirectory() {
@@ -58,16 +65,72 @@ async function prepareDirectories(directory) {
   return { requests, responses };
 }
 
-export async function launchYuliang() {
-  if (process.platform !== 'darwin') {
+function launchFailure(error) {
+  if (error?.code === 'EACCES' || error?.code === 'EPERM') return 'app_launch_denied';
+  if (error?.code === 'ETIMEDOUT' || error?.killed || ['SIGTERM', 'SIGKILL'].includes(error?.signal)) return 'app_launch_timeout';
+  return 'app_launch_failed';
+}
+
+function launcherError(code) {
+  const messages = {
+    app_launch_denied: '当前环境未允许自动启动余量。请手动打开余量后重试；这不代表 App 未安装。',
+    app_launch_timeout: '自动启动余量超时，且本机连接尚未回应。请手动打开余量后重试。',
+    app_launch_failed: '未能自动启动余量，且本机连接尚未回应。请手动打开余量后重试。'
+  };
+  return new BridgeError(Object.hasOwn(messages, code) ? code : 'app_launch_failed', messages[code] ?? messages.app_launch_failed);
+}
+
+function remainingTimeout(deadline, maximum) {
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) throw launcherError('app_launch_timeout');
+  return Math.max(1, Math.min(maximum, remaining));
+}
+
+export async function inspectAppBundle(appPath, { execute = executeFile, deadline = Date.now() + 1_000 } = {}) {
+  // Only metadata is inspected. Production callers supply the two fixed App
+  // locations below; no authentication or quota files are read here.
+  await verifyDirectoryChain(path.join(appPath, 'Contents'));
+  const infoPath = path.join(appPath, 'Contents', 'Info.plist');
+  const info = await lstat(infoPath);
+  if (!info.isFile() || info.isSymbolicLink() || info.size > 1024 * 1024) return undefined;
+  const { stdout } = await execute('/usr/bin/plutil', ['-extract', 'CFBundleIdentifier', 'raw', '-o', '-', infoPath],
+    { timeout: remainingTimeout(deadline, 1_000), maxBuffer: 1_024 });
+  return stdout.trim();
+}
+
+export async function launchYuliang(options = {}) {
+  const platform = options.platform ?? process.platform;
+  if (platform !== 'darwin') {
     throw new BridgeError('unsupported_platform', '此试验版需要 macOS 和已安装的余量 App。');
   }
+  const execute = options.execute ?? executeFile;
+  const inspectBundle = options.inspectBundle ?? inspectAppBundle;
+  const homeDirectory = options.homeDirectory ?? os.homedir();
+  const deadline = options.deadline ?? Date.now() + MAX_WAIT_MS;
+  const failures = [];
+  const openApp = args => execute('/usr/bin/open', ['-g', ...args],
+    { timeout: remainingTimeout(deadline, 3_000), maxBuffer: 8 * 1024 });
   try {
-    await executeFile('/usr/bin/open', ['-g', '-b', 'com.yuliang.quota.standalone'],
-      { timeout: 3_000, maxBuffer: 8 * 1024 });
-  } catch {
-    throw new BridgeError('app_unavailable', '未能启动余量。请先安装支持插件连接的余量 v0.17.0（build 23）或更新版本。');
+    await openApp(['-b', APP_BUNDLE_ID]);
+    return;
+  } catch (error) { failures.push(error instanceof BridgeError ? error.code : launchFailure(error)); }
+  // LaunchServices may not yet know a freshly installed Bundle ID. A fallback
+  // is allowed only at these locations and only after matching Info.plist.
+  const candidates = ['/Applications/余量.app', path.join(homeDirectory, 'Applications', '余量.app')];
+  for (const candidate of candidates) {
+    if (Date.now() >= deadline) break;
+    let identifier;
+    try { identifier = await inspectBundle(candidate, { execute, deadline }); }
+    catch (error) {
+      if (['EACCES', 'EPERM'].includes(error?.code)) failures.push('app_launch_denied');
+      continue;
+    }
+    if (identifier !== APP_BUNDLE_ID) continue;
+    try { await openApp([candidate]); return; }
+    catch (error) { failures.push(error instanceof BridgeError ? error.code : launchFailure(error)); }
   }
+  throw launcherError(failures.includes('app_launch_denied') ? 'app_launch_denied'
+    : failures.includes('app_launch_timeout') || Date.now() >= deadline ? 'app_launch_timeout' : 'app_launch_failed');
 }
 
 async function readPrivateResponse(filename) {
@@ -121,6 +184,9 @@ function validateResponse(response, id) {
 }
 
 export async function requestBridge(action, args = {}, options = {}) {
+  if (!options.launch && process.platform !== 'darwin') {
+    throw new BridgeError('unsupported_platform', '此试验版需要 macOS 和已安装的余量 App。');
+  }
   const directory = path.resolve(options.directory ?? defaultBridgeDirectory());
   const timeoutMs = Math.min(MAX_WAIT_MS, Math.max(1, options.timeoutMs ?? MAX_WAIT_MS));
   const launch = options.launch ?? launchYuliang;
@@ -130,7 +196,7 @@ export async function requestBridge(action, args = {}, options = {}) {
   let requestFile, responseFile, temporaryFile;
   try {
     const startedAt = Date.now();
-    await launch();
+    const deadline = startedAt + timeoutMs;
     const { requests, responses } = await prepareDirectories(directory);
     requestFile = path.join(requests, `${id}.json`);
     responseFile = path.join(responses, `${id}.json`);
@@ -139,13 +205,34 @@ export async function requestBridge(action, args = {}, options = {}) {
     try { await handle.writeFile(payload, 'utf8'); }
     finally { await handle.close(); }
     await rename(temporaryFile, requestFile);
-    while (Date.now() - startedAt < timeoutMs) {
-      const response = await readPrivateResponse(responseFile);
-      if (response !== undefined) return validateResponse(response, id);
-      await delay(Math.min(100, Math.max(1, timeoutMs - (Date.now() - startedAt))));
+    const waitForResponse = async until => {
+      do {
+        const response = await readPrivateResponse(responseFile);
+        if (response !== undefined) return validateResponse(response, id);
+        const remaining = until - Date.now();
+        if (remaining <= 0) break;
+        await delay(Math.min(100, remaining));
+      } while (Date.now() <= until);
+      return undefined;
+    };
+    // An already running App can process the same queue without invoking
+    // LaunchServices. This is also the only UUID used for a cold start.
+    const warmResult = await waitForResponse(Math.min(deadline, Date.now() + WARM_RESPONSE_WAIT_MS));
+    if (warmResult !== undefined) return warmResult;
+    let startupError;
+    if (Date.now() < deadline) {
+      try { await launch({ deadline }); }
+      catch (error) { startupError = error instanceof BridgeError ? launcherError(error.code) : launcherError(launchFailure(error)); }
     }
-    throw new BridgeError('bridge_timeout', '未收到余量回应。请确认已安装支持插件连接的 v0.17.0（build 23）或更新版本，并保持 App 运行。');
+    // A denied/slow launcher must not discard a response from an App that was
+    // already starting. Wait for this request, without reposting the action.
+    const result = await waitForResponse(deadline);
+    if (result !== undefined) return result;
+    if (startupError) throw startupError;
+    throw new BridgeError('bridge_timeout', '本机余量尚未回应。请确认 App 支持插件连接并保持运行，然后重试。');
   } catch (error) {
+    const permissionError = bridgePermissionError(error);
+    if (permissionError) throw permissionError;
     if (error instanceof BridgeError) throw error;
     throw new BridgeError('bridge_unavailable', '无法连接本机余量，请检查 App 是否已安装以及本机连接目录是否可写。');
   } finally {

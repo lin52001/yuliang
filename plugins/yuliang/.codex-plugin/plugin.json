@@ -1,6 +1,6 @@
 {
   "name": "yuliang",
-  "version": "0.1.0-beta.1",
+  "version": "0.1.0-beta.2",
   "description": "连接本机余量小组件，查看额度、Token 并与小伙伴互动。",
   "requires_local_executor": true,
   "skills": "./skills/",

@@ -131,7 +131,7 @@ struct DesktopShellCheck {
         // Clockwise cardinal points catch reversed rings, full/empty endpoint
         // discontinuities and sprites that protrude beyond the authored frame.
         let points: [(Double, CGFloat, CGFloat)] = [
-            (0, 40, 16), (25, 64, 40), (50, 40, 64), (75, 16, 40), (100, 40, 16)
+            (0, 40, 13.6), (25, 66.4, 40), (50, 40, 66.4), (75, 13.6, 40), (100, 40, 13.6)
         ]
         for (percent, x, y) in points {
             let layout = QuotaDuoGeometry(size: 80, remainingPercent: percent)
@@ -697,7 +697,10 @@ struct DesktopShellCheck {
 
     @MainActor
     private static func renderGaugeBoundaries(now: Date, preferences: QuotaPreferences) throws {
-        let states: [(String, Double?)] = [("empty", 0), ("full", 100), ("unknown", nil)]
+        let states: [(String, Double?)] = [
+            ("empty", 0), ("low", 22), ("quarter", 25), ("half", 50),
+            ("two-thirds", 68), ("three-quarters", 75), ("full", 100), ("unknown", nil)
+        ]
         for dark in [false, true] {
             for (name, remaining) in states {
                 var selected = preferences
@@ -778,12 +781,18 @@ struct DesktopShellCheck {
         let compact = model.compact
         let appearance = model.appearance
         let colors = model.widgetColorStyle
+        let style = model.displayStyle
+        let activity = model.buddyActivity
+        let feedback = model.buddyFeedback
         let records = model.document.records
         defer {
             model.language = language
             model.compact = compact
             model.appearance = appearance
             model.widgetColorStyle = colors
+            model.displayStyle = style
+            model.buddyActivity = activity
+            model.buddyFeedback = feedback
             settle(0.25)
             shell.shellTestResize()
         }
@@ -792,6 +801,7 @@ struct DesktopShellCheck {
             model.language = selectedLanguage
             for dark in [false, true] {
                 model.appearance = dark ? .dark : .light
+                model.displayStyle = .card
                 for isCompact in [false, true] {
                     model.compact = isCompact
                     settle(0.55)
@@ -802,6 +812,20 @@ struct DesktopShellCheck {
                     if let content = panel.contentView {
                         try render(content, named: "native-\(isCompact ? "compact" : "standard")-\(selectedLanguage.rawValue)-\(dark ? "dark" : "light").png")
                     }
+                }
+                // Exercise a real long interaction caption in the small Duo
+                // footprint, not only the shorter single-line Chinese footer.
+                // Three deterministic choices select the first theme phrase.
+                model.displayStyle = .duo
+                model.buddyFeedback = BuddyFeedbackState()
+                for _ in 0..<3 { model.play(model.document.preferences.character.signatureAction) }
+                settle(0.55)
+                shell.shellTestResize()
+                let panel = shell.shellTestPanel
+                try require(panel.frame.size == expectedDuoSize,
+                            "localized Duo caption changed the fixed small-widget footprint")
+                if let content = panel.contentView {
+                    try render(content, named: "native-duo-\(selectedLanguage.rawValue)-\(dark ? "dark" : "light").png")
                 }
             }
         }
@@ -1194,7 +1218,9 @@ struct DesktopShellCheck {
         try require(panel.frame.size == expectedCardSize && abs(panel.frame.height - compactHeight) <= 1,
                     "changing card density resized the fixed medium-widget surface")
         model.compact = true
-        settle()
+        // The density transition is 0.36s. Capture its settled compact layout,
+        // rather than the larger card halfway through its shrinking frame.
+        settle(0.55)
         shell.shellTestResize()
         try require(panel.frame.size == expectedCompactSize && panel.frame.height < compactHeight * 0.75,
                     "compact mode did not materially reduce the actual native footprint")

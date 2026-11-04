@@ -1,6 +1,7 @@
 import { TOOLS, callTool } from './tools.mjs';
+import { bridgePermissionError } from './bridge.mjs';
 
-export const SERVER_VERSION = '0.1.0-beta.1';
+export const SERVER_VERSION = '0.1.0-beta.2';
 export const MAX_MESSAGE_BYTES = 64 * 1024;
 const PROTOCOLS = new Set(['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05']);
 const plainObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -10,6 +11,10 @@ const validId = id => (typeof id === 'string' && id.length <= 128) || (Number.is
 export function createProtocol({ bridge } = {}) {
   let initialized = false;
   let ready = false;
+  const safeBridge = bridge && (async (...args) => {
+    try { return await bridge(...args); }
+    catch (error) { throw bridgePermissionError(error) ?? error; }
+  });
   return async function handle(message) {
     const id = validId(message?.id) ? message.id : null;
     if (!plainObject(message) || message.jsonrpc !== '2.0' || typeof message.method !== 'string'
@@ -51,8 +56,8 @@ export function createProtocol({ bridge } = {}) {
       if (params.arguments !== undefined && !plainObject(params.arguments)) {
         return rpcError(id, -32602, 'Tool arguments must be an object.');
       }
-      const result = await callTool(params.name, params.arguments ?? {}, bridge);
-      return { jsonrpc: '2.0', id, result };
+      const result = await callTool(params.name, params.arguments ?? {}, safeBridge);
+      return { jsonrpc: '2.0', id, result: { ...result, _meta: { 'io.yuliang/pluginVersion': SERVER_VERSION } } };
     }
     return rpcError(id, -32601, 'Method not found.');
   };

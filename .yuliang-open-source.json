@@ -13,7 +13,7 @@
     },
     {
       "path": ".github/workflows/release.yml",
-      "sha256": "0cb99e75c743b4d6e4443458aa928b265399b67764bcb691c8c360a62c07b8bd"
+      "sha256": "cd0e44c39520f8ebb91d39723538abb970dc1bcb6a976a21aa83cfd3e6f1dd9a"
     },
     {
       "path": ".gitignore",
@@ -45,7 +45,7 @@
     },
     {
       "path": "apple/MacStandalone/Info.plist",
-      "sha256": "be5c618ffb1ea9008b9b796bae82c1ff3d19947ca6b0434cde68abcc30d56d96"
+      "sha256": "3918478c5aa776e1e00804dc824d1b05ed956e35fde649289e4e83c29fa1af49"
     },
     {
       "path": "apple/MacStandalone/QuotaWebCollector.swift",
@@ -65,11 +65,15 @@
     },
     {
       "path": "apple/MacStandalone/YuliangStandaloneApp.swift",
-      "sha256": "d19b737381b10fed06d50a843e075a1f8e67d0b82919cb9622ad5c0194c1bda2"
+      "sha256": "26c1864e8a4feaec7330f47a2d2364517274f97b58f0cc71c9a92760506cb04b"
     },
     {
       "path": "apple/Package.swift",
       "sha256": "75f249f115f64ad79ee1f2aafbde73ac5678fb7cfe7c51dc2f8f4330bfb7a4c2"
+    },
+    {
+      "path": "apple/Resources/new-buddies-v017.png",
+      "sha256": "839f6802853e67a59d7172bde0d87e124dfe4b83c8c4eaef2c32607f4b2fa68f"
     },
     {
       "path": "apple/Resources/original-buddies-v1.png",
@@ -97,7 +101,7 @@
     },
     {
       "path": "apple/scripts/check-desktop-shell.swift",
-      "sha256": "e58e3b3dfecd259c8f39971cac372183348fa2570e2da1e4707522812032ae38"
+      "sha256": "76f5b0dcd67ce25a2d91acae6cb4a4f8243cd45f24901bd8a9d5e53629bf2128"
     },
     {
       "path": "apple/scripts/check-plugin-bridge.mjs",
@@ -145,7 +149,7 @@
     },
     {
       "path": "apple/Shared/QuotaCard.swift",
-      "sha256": "c300f8ddac018957e1a5fc43119541e4de1497e0b56bc9f6c66bc670bc1663db"
+      "sha256": "be1df1e5f982b945df6cda9bbaeb376dea501f8e2ffcc1e596578a1cd11331c6"
     },
     {
       "path": "apple/Sources/QuotaCore/AppLanguage.swift",
@@ -201,11 +205,11 @@
     },
     {
       "path": "ASSETS.md",
-      "sha256": "3006964e3f785d33fd42f72b662c84726ba5cea8aabf3c366ce0e5824fb23bdf"
+      "sha256": "f4731896514e76bec421e0e5ec5270d84ae35a1037312d1d48f488f695db46fe"
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "0af686bb4e80eb7246b45cc83bc8f60af4f651c9ceb7088fe1e337a1e8307827"
+      "sha256": "fd5f331f461f8059f31909b5d21cae45ca327dcc6560a46a71067412e0040dcf"
     },
     {
       "path": "CONTRIBUTING.md",
@@ -213,19 +217,19 @@
     },
     {
       "path": "docs/assets/compact-dark.png",
-      "sha256": "a06da5eebaab7999895f9ffb17c32911045b24d23dc0c4a3fbf5830aacc19202"
+      "sha256": "3a741a2d9ca372cb8dd88a598aadee1730553dcb36848eda4088e63496a1701e"
     },
     {
       "path": "docs/assets/compact.png",
-      "sha256": "ed7c2cbbf51646e2c8b55acd9d851007f8e594ed8864d5deb2c7da57993b1315"
+      "sha256": "5ade2410384854e31614fe9dd943bbdb3ee8c455c6241faa404ff1df6cc510a5"
     },
     {
       "path": "docs/assets/duo-dark.png",
-      "sha256": "5e63d4e70708d923ecf81537604754cca307aa7bca5f0ff88e5701ff9fa94a2d"
+      "sha256": "5cbdf80812235080959b2d6f0d6377609ee1e4d7619e88ff996fbcc9efb7a7ba"
     },
     {
       "path": "docs/assets/duo.png",
-      "sha256": "dd45818c5982269b0ccf25478a8614a64396fa99fda0b4dca8910f8dfb8eceec"
+      "sha256": "f5ce51493c1a593eecd027144273120c61233da340792220eff67a2731f7d9f1"
     },
     {
       "path": "docs/assets/settings-dark.png",
@@ -237,23 +241,23 @@
     },
     {
       "path": "docs/assets/widget-dark.png",
-      "sha256": "64f874a67996d446acdb5057ddee7ee26c53ade594564eeb9d2116a9e09bcf83"
+      "sha256": "a01371d5728fb3a28393a5333151c02c733e62059f30dd039c18475329c6b4c8"
     },
     {
       "path": "docs/assets/widget.png",
-      "sha256": "82765a4bbc5058987332717b9dc9dc6b17b4d0ab9ffdb5570d968d65b0d34b91"
+      "sha256": "f00deeab2a9c680d370541ae3cd39d1954de383e0aeb6f7ef8ef689b5558c0ef"
     },
     {
       "path": "docs/YULIANG-PLUGIN.md",
-      "sha256": "50939e0b303e9ea72192cdb9e96c06013b5f2d1a327d83d821608a326dbeb205"
+      "sha256": "ecc25ca0bb8ed2e6c7b004b889902c06726146eee75e0b15d4efa6450de5c036"
     },
     {
-      "path": "downloads/Yuliang-Plugin-v0.1.0-beta.1.sha256",
-      "sha256": "9549b32873069f6e068c8ce318b69393da78dc22bd8031eccc4c61f629d50930"
+      "path": "downloads/Yuliang-Plugin-v0.1.0-beta.2.sha256",
+      "sha256": "3fd9a61c71d1e16a9314d6a3ba4d9dbbecd624ce04de49ed243503dfa68e1238"
     },
     {
-      "path": "downloads/Yuliang-Plugin-v0.1.0-beta.1.zip",
-      "sha256": "4e37a0ce793a1c5120bbcbe1fde12171a67264fa9be0fa36974be6c0dd88f5c2"
+      "path": "downloads/Yuliang-Plugin-v0.1.0-beta.2.zip",
+      "sha256": "ae0dd2dea496463bc1d01e19a6bd9d11f8ca67ab1a334d5e0b0cd23817754b68"
     },
     {
       "path": "extension/parser.js",
@@ -265,11 +269,11 @@
     },
     {
       "path": "package.json",
-      "sha256": "da2e28e8cbcac41c7f1f08da4853d4f1edb0a3f1400dc791d82dd0bfea3d505e"
+      "sha256": "f23e071257c90df0ace1f99c81b40a36a3e3232001ac6b93c4458b5ba5678bb1"
     },
     {
       "path": "plugins/yuliang/.codex-plugin/plugin.json",
-      "sha256": "e6964f664782360320bd644eeb7b89bddee285b70e640caba9cd0ae67924aeed"
+      "sha256": "c22a09656412fd8ded06513faae4b1884f8dae7e78d2321683664385d716f89b"
     },
     {
       "path": "plugins/yuliang/.mcp.json",
@@ -281,15 +285,15 @@
     },
     {
       "path": "plugins/yuliang/plugin.json",
-      "sha256": "9a477987f4f13e9a531401df355ec27244743a49389eb946e64787faf602d2aa"
+      "sha256": "ca0581b69e07051aa5a387cc5653f53e8d8f56bb64934b2aefa43a2178efa28f"
     },
     {
       "path": "plugins/yuliang/README.md",
-      "sha256": "78a74e5f74817660bfe8db2348dda07746389a68351df898973ebfcf87ca900b"
+      "sha256": "37e9becb01269f134b2be52716a26b359d3560b04eaf21c2987a15b0c69c9398"
     },
     {
       "path": "plugins/yuliang/server/bridge.mjs",
-      "sha256": "06e0c01f6efc1b0016008beb1d93cf0183cf7fce23fb670e0a0a16c2cac9d826"
+      "sha256": "c3a2a4bc35cfcc98a6afff9ca7bd473cda82faa30d47f5c5fa85186914986ffc"
     },
     {
       "path": "plugins/yuliang/server/cli.mjs",
@@ -301,7 +305,7 @@
     },
     {
       "path": "plugins/yuliang/server/protocol.mjs",
-      "sha256": "8ab9dc362bb26bf6291eaf2adb051d93e8f5b1ce12c822e434e2a0eeff1197fc"
+      "sha256": "86889c48fca45e7c4ac113a7d7099fc17425a7db582c5983bd765fb00eef6452"
     },
     {
       "path": "plugins/yuliang/server/tools.mjs",
@@ -313,7 +317,7 @@
     },
     {
       "path": "plugins/yuliang/skills/yuliang/SKILL.md",
-      "sha256": "6b5b9dbc2dc4d724a71882a2832f5b9f704051c4f1b0a1c3ff754f7ecde36097"
+      "sha256": "e934f0679cde8ff41523ae0962bb912ff58e9a4de12992230e00ae7975f29972"
     },
     {
       "path": "PROGRESS-INTERACTION-REFERENCES.md",
@@ -321,15 +325,19 @@
     },
     {
       "path": "README.en.md",
-      "sha256": "3c9f566076c6555b6ea6ac9dac946edc753294f8602406337c8a56f682857345"
+      "sha256": "1a2fa08c167d51c06f6adb204c99874fd2b6b624c7c35a975c49a675b84de81c"
     },
     {
       "path": "README.md",
-      "sha256": "4c6d4bbe99ff619e7278aff68799ee1829bfd8eda92cdcc43208516385fb0911"
+      "sha256": "681b3511ed7e209b277c395fa05988c2472158bca22ea1ec2619413b57163864"
     },
     {
       "path": "RELEASE-v0.17.0.md",
-      "sha256": "02750e543600817afadf0836fab071604de55e8227451b7e84d7449fe4c9ae08"
+      "sha256": "0fb1adb791a9db7ee7936c6c2e04dd24f7ee2e9aad34b2988d0bbbc3ac82dba6"
+    },
+    {
+      "path": "RELEASE-v0.17.1.md",
+      "sha256": "1f41d349f3665212c3bb7d8dc1148bd7fa81dfdd902aa877afaa4d4ea730625b"
     },
     {
       "path": "scripts/package-plugin.mjs",
@@ -341,7 +349,7 @@
     },
     {
       "path": "tests/plugin.test.mjs",
-      "sha256": "ae591e18ceaf2b252d373629c737a1be85f2968eaa5705f07d2e2927b2546256"
+      "sha256": "eaaf79770e5101504efba890739399a79bf6ac24bc08de9adc5613f2792a5cac"
     }
   ]
 }
