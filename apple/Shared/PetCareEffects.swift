@@ -37,85 +37,113 @@ struct PetCarePropEffect: View {
     private var lift: Double { sin(t * .pi) }
 
     var body: some View {
-        ZStack {
-            switch action {
-            case .fruit:
-                PetFruit(bitten: t > 0.47)
-                    .frame(width: size * 0.29, height: size * 0.31)
-                    .rotationEffect(.degrees(-18 + 20 * lift))
-                    .scaleEffect(reduceMotion ? 1 : 1 - max(0, t - 0.65) * 1.5)
-                    .offset(x: -size * (0.37 - min(1, t / 0.35) * 0.31), y: size * 0.05 - lift * size * 0.06)
-                sparkleTrail(symbol: "leaf.fill", tint: .green, count: 2)
-            case .milk:
-                milkBottle
-                    .rotationEffect(.degrees(reduceMotion ? -15 : -30 * lift))
-                    .offset(x: size * (0.32 - 0.2 * lift), y: size * (0.18 - 0.23 * lift))
-                if t > 0.35 {
-                    Image(systemName: "drop.fill")
-                        .font(.system(size: size * 0.08))
-                        .foregroundStyle(Color.white)
-                        .offset(x: size * 0.02, y: -size * 0.02)
-                }
-            case .playBall:
-                ZStack {
-                    Circle().fill(accent.opacity(0.9))
-                    Circle().trim(from: 0.15, to: 0.65).stroke(Color.white.opacity(0.9), lineWidth: max(1, size * 0.025))
-                        .padding(size * 0.04)
-                    Circle().fill(Color.white.opacity(0.85)).frame(width: size * 0.05, height: size * 0.05)
-                        .offset(x: size * 0.055, y: -size * 0.035)
-                }
-                .frame(width: size * 0.25, height: size * 0.25)
-                .rotationEffect(.degrees(reduceMotion ? 0 : t * 540))
-                .offset(x: reduceMotion ? size * 0.3 : cos(t * .pi * 2) * size * 0.4,
-                        y: size * 0.31 - (reduceMotion ? 0 : abs(sin(t * .pi * 3)) * size * 0.22))
-            case .groom:
-                Image(systemName: "comb.fill")
-                    .font(.system(size: size * 0.32, weight: .medium))
-                    .rotationEffect(.degrees(-35 + (reduceMotion ? 0 : sin(t * .pi * 6) * 12)))
-                    .foregroundStyle(accent)
-                    .offset(x: size * 0.2, y: -size * 0.22 + (reduceMotion ? 0 : sin(t * .pi * 6) * size * 0.06))
-                sparkleTrail(symbol: "sparkle", tint: accent, count: 3)
-            case .highFive:
-                Image(systemName: "hand.raised.fill")
-                    .font(.system(size: size * 0.32, weight: .medium))
-                    .foregroundStyle(Color(red: 0.98, green: 0.77, blue: 0.57))
-                    .rotationEffect(.degrees(-22 + 22 * lift))
-                    .offset(x: size * (0.4 - 0.12 * lift), y: -size * 0.17)
-                Canvas { context, _ in
-                    guard t > 0.30, t < 0.85 else { return }
-                    let burst = reduceMotion ? 0.5 : (t - 0.30) / 0.55
-                    for index in 0..<3 {
-                        let angle = Double(index) * 0.65 - 1.2
-                        let start = CGPoint(x: size * 0.78 + cos(angle) * size * (0.08 + burst * 0.12),
-                                            y: size * 0.27 + sin(angle) * size * (0.08 + burst * 0.12))
-                        var ray = Path()
-                        ray.move(to: start)
-                        ray.addLine(to: CGPoint(x: start.x + cos(angle) * size * 0.09, y: start.y + sin(angle) * size * 0.09))
-                        context.stroke(ray, with: .color(accent.opacity(1 - burst)), style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
-                    }
-                }.frame(width: size, height: size)
-            case .rest:
-                Image(systemName: "moon.zzz.fill")
-                    .font(.system(size: size * 0.26, weight: .medium))
-                    .foregroundStyle(accent.opacity(0.8))
-                    .offset(x: size * 0.3, y: -size * 0.3 - (reduceMotion ? 0 : lift * size * 0.08))
-                RoundedRectangle(cornerRadius: size * 0.05)
-                    .fill(accent.opacity(0.20))
-                    .frame(width: size * 0.63, height: size * 0.12)
-                    .offset(y: size * 0.41)
-            case .explore:
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: size * 0.32, weight: .semibold))
-                    .foregroundStyle(accent)
-                    .rotationEffect(.degrees(-25 + (reduceMotion ? 0 : sin(t * .pi * 2) * 18)))
-                    .offset(x: size * 0.3, y: -size * 0.01)
-                sparkleTrail(symbol: "sparkle", tint: accent, count: 2)
-            }
+        ZStack { prop }
+            .frame(width: size, height: size)
+            .opacity(envelope)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+
+    // Keep each effect in a separate view expression so the supported Swift
+    // toolchains do not infer all seven animated prop trees at once.
+    @ViewBuilder private var prop: some View {
+        switch action {
+        case .fruit: fruitEffect
+        case .milk: milkEffect
+        case .playBall: playBallEffect
+        case .groom: groomEffect
+        case .highFive: highFiveEffect
+        case .rest: restEffect
+        case .explore: exploreEffect
         }
-        .frame(width: size, height: size)
-        .opacity(envelope)
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
+    }
+
+    @ViewBuilder private var fruitEffect: some View {
+        PetFruit(bitten: t > 0.47)
+            .frame(width: size * 0.29, height: size * 0.31)
+            .rotationEffect(.degrees(-18 + 20 * lift))
+            .scaleEffect(reduceMotion ? 1 : 1 - max(0, t - 0.65) * 1.5)
+            .offset(x: -size * (0.37 - min(1, t / 0.35) * 0.31), y: size * 0.05 - lift * size * 0.06)
+        sparkleTrail(symbol: "leaf.fill", tint: .green, count: 2)
+    }
+
+    @ViewBuilder private var milkEffect: some View {
+        milkBottle
+            .rotationEffect(.degrees(reduceMotion ? -15 : -30 * lift))
+            .offset(x: size * (0.32 - 0.2 * lift), y: size * (0.18 - 0.23 * lift))
+        if t > 0.35 {
+            Image(systemName: "drop.fill")
+                .font(.system(size: size * 0.08))
+                .foregroundStyle(Color.white)
+                .offset(x: size * 0.02, y: -size * 0.02)
+        }
+    }
+
+    @ViewBuilder private var playBallEffect: some View {
+        ZStack {
+            Circle().fill(accent.opacity(0.9))
+            Circle().trim(from: 0.15, to: 0.65).stroke(Color.white.opacity(0.9), lineWidth: max(1, size * 0.025))
+                .padding(size * 0.04)
+            Circle().fill(Color.white.opacity(0.85)).frame(width: size * 0.05, height: size * 0.05)
+                .offset(x: size * 0.055, y: -size * 0.035)
+        }
+        .frame(width: size * 0.25, height: size * 0.25)
+        .rotationEffect(.degrees(reduceMotion ? 0 : t * 540))
+        .offset(x: reduceMotion ? size * 0.3 : cos(t * .pi * 2) * size * 0.4,
+                y: size * 0.31 - (reduceMotion ? 0 : abs(sin(t * .pi * 3)) * size * 0.22))
+    }
+
+    @ViewBuilder private var groomEffect: some View {
+        Image(systemName: "comb.fill")
+            .font(.system(size: size * 0.32, weight: .medium))
+            .rotationEffect(.degrees(-35 + (reduceMotion ? 0 : sin(t * .pi * 6) * 12)))
+            .foregroundStyle(accent)
+            .offset(x: size * 0.2, y: -size * 0.22 + (reduceMotion ? 0 : sin(t * .pi * 6) * size * 0.06))
+        sparkleTrail(symbol: "sparkle", tint: accent, count: 3)
+    }
+
+    @ViewBuilder private var highFiveEffect: some View {
+        Image(systemName: "hand.raised.fill")
+            .font(.system(size: size * 0.32, weight: .medium))
+            .foregroundStyle(Color(red: 0.98, green: 0.77, blue: 0.57))
+            .rotationEffect(.degrees(-22 + 22 * lift))
+            .offset(x: size * (0.4 - 0.12 * lift), y: -size * 0.17)
+        Canvas { context, _ in
+            guard t > 0.30, t < 0.85 else { return }
+            let burst = reduceMotion ? 0.5 : (t - 0.30) / 0.55
+            for index in 0..<3 {
+                let angle = Double(index) * 0.65 - 1.2
+                let radius: Double = size * (0.08 + burst * 0.12)
+                let start = CGPoint(x: size * 0.78 + cos(angle) * radius,
+                                    y: size * 0.27 + sin(angle) * radius)
+                var ray = Path()
+                ray.move(to: start)
+                let end = CGPoint(x: start.x + CGFloat(cos(angle) * size * 0.09),
+                                  y: start.y + CGFloat(sin(angle) * size * 0.09))
+                ray.addLine(to: end)
+                context.stroke(ray, with: .color(accent.opacity(1 - burst)), style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+            }
+        }.frame(width: size, height: size)
+    }
+
+    @ViewBuilder private var restEffect: some View {
+        Image(systemName: "moon.zzz.fill")
+            .font(.system(size: size * 0.26, weight: .medium))
+            .foregroundStyle(accent.opacity(0.8))
+            .offset(x: size * 0.3, y: -size * 0.3 - (reduceMotion ? 0 : lift * size * 0.08))
+        RoundedRectangle(cornerRadius: size * 0.05)
+            .fill(accent.opacity(0.20))
+            .frame(width: size * 0.63, height: size * 0.12)
+            .offset(y: size * 0.41)
+    }
+
+    @ViewBuilder private var exploreEffect: some View {
+        Image(systemName: "magnifyingglass")
+            .font(.system(size: size * 0.32, weight: .semibold))
+            .foregroundStyle(accent)
+            .rotationEffect(.degrees(-25 + (reduceMotion ? 0 : sin(t * .pi * 2) * 18)))
+            .offset(x: size * 0.3, y: -size * 0.01)
+        sparkleTrail(symbol: "sparkle", tint: accent, count: 2)
     }
 
     private var milkBottle: some View {
