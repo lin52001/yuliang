@@ -47,12 +47,15 @@ try {
     .filter(name => name.endsWith('.swift')).sort().map(name => `Sources/QuotaCore/${name}`);
   const standalone = [
     'Shared/OriginalBuddy.swift',
+    'Shared/PetCareEffects.swift',
     'Shared/QuotaCard.swift',
     'MacStandalone/CodexTokenUsage.swift',
     'MacStandalone/CodexQuotaCollector.swift',
     'MacStandalone/QuotaWebCollector.swift',
     'MacStandalone/ClaudeConnectionView.swift',
     'MacStandalone/StandaloneQuotaStore.swift',
+    'MacStandalone/StandalonePetStore.swift',
+    'MacStandalone/StandalonePetView.swift',
     'MacStandalone/StandalonePluginBridge.swift',
     'MacStandalone/YuliangStandaloneApp.swift',
     'MacStandalone/StandaloneDesktopShell.swift',

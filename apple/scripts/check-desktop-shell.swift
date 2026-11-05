@@ -834,6 +834,162 @@ struct DesktopShellCheck {
     }
 
     @MainActor
+    private static func petAccessibilityNode(_ node: Any, identifier: String, depth: Int = 0) -> (any NSAccessibilityProtocol)? {
+        guard depth < 24, let accessible = node as? any NSAccessibilityProtocol else { return nil }
+        if accessible.accessibilityIdentifier() == identifier { return accessible }
+        for child in accessible.accessibilityChildren() ?? [] {
+            if let match = petAccessibilityNode(child, identifier: identifier, depth: depth + 1) { return match }
+        }
+        return nil
+    }
+
+    @MainActor
+    private static func checkPetCompanion(model: StandaloneModel, shell: StandaloneAppDelegate,
+                                          tokens: TokenUsageSnapshot) throws {
+        let preferences = model.document.preferences
+        let records = model.document.records
+        let originalLanguage = model.language
+        let originalAppearance = model.appearance
+        let originalStyle = model.displayStyle
+        let originalCompact = model.compact
+        let originalColor = model.widgetColorStyle
+        let originalCompanion = model.companionEnabled
+        let originalFeedback = model.buddyFeedback
+        model.companionEnabled = false
+        model.buddyActivity = nil
+        model.widgetColorStyle = .fullColor
+        model.selectCharacter(.dragonGirl)
+        model.buddyActivity = nil
+        model.language = .zhHans
+        model.appearance = .light
+        model.displayStyle = .card
+        model.compact = false
+        settle(0.45)
+        defer {
+            shell.shellTestPetWindow?.close()
+            model.choosePetSkin(.natural)
+            model.preference { $0 = preferences }
+            model.buddyActivity = nil
+            model.buddyFeedback = originalFeedback
+            model.language = originalLanguage
+            model.appearance = originalAppearance
+            model.widgetColorStyle = originalColor
+            model.companionEnabled = originalCompanion
+            model.compact = originalCompact
+            model.displayStyle = originalStyle
+            settle(0.4)
+            shell.shellTestResize()
+        }
+        shell.shellTestShowPet()
+        settle(0.4)
+        guard let petWindow = shell.shellTestPetWindow, let content = petWindow.contentView else {
+            throw ShellCheckFailure(description: "pet control did not construct its native companion window")
+        }
+        try require(isOnScreen(petWindow) && content.bounds.size == NSSize(width: 400, height: 540),
+                    "pet window has no visible fixed 400-by-540-point content")
+        let widgetSize = shell.shellTestPanel.frame.size
+        let firstAppearance = petWindow.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua])
+        try require(firstAppearance == .aqua, "pet window did not inherit the selected light theme")
+        let light = try render(content, named: "synthetic-pet-care-zhHans-light.png")
+        let countBefore = model.petProfile.careCount
+        if let button = petAccessibilityNode(content, identifier: "yuliang.pet.care.fruit") {
+            try require(button.isAccessibilityEnabled() && button.accessibilityPerformPress(),
+                        "real fruit-care accessibility button rejected its press")
+        } else {
+            // SwiftUI's virtual accessibility may be unavailable in a CLT
+            // harness. Deliver a real mouse pair only to this process's own
+            // hosted first care button, rather than invoking model.care.
+            let local = NSPoint(x: 60, y: content.isFlipped ? 254 : 286)
+            let point = content.convert(local, to: nil)
+            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                guard let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
+                    timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: petWindow.windowNumber,
+                    context: nil, eventNumber: 16, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0) else {
+                    throw ShellCheckFailure(description: "cannot construct own-window care-button mouse event")
+                }
+                NSApp.postEvent(event, atStart: false)
+            }
+        }
+        settle(0.35)
+        try require(model.petProfile.careCount == countBefore + 1 && model.buddyActivity?.petCare == .fruit,
+                    "actual pet-care button click did not dispatch and persist fruit care")
+        let persisted = try StandalonePetStore(directory: model.store.directory).read()
+        try require(persisted.profile(for: .dragonGirl).careCount == model.petProfile.careCount,
+                    "real care button did not persist its pet progress")
+        let afterClick = try render(content, named: "synthetic-pet-fruit-button-feedback.png")
+        try require(pixelDifference(light, afterClick) > 0.001,
+                    "care response did not visibly change the actual pet window")
+        // Updating both existing readers and the clock must leave this same
+        // window open. No reader is started and no network request is made.
+        for _ in 0..<3 {
+            model.collector.shellTestSetTokenUsage(tokens)
+            model.now = Date()
+            settle(0.2)
+            try require(shell.shellTestPetWindow === petWindow && isOnScreen(petWindow)
+                        && content.bounds.size == NSSize(width: 400, height: 540),
+                        "pet window vanished or resized during an account publication")
+        }
+        model.buddyActivity = nil
+        for language in [YuliangLanguage.zhHans, .en, .ja] {
+            model.language = language
+            for dark in [false, true] {
+                model.appearance = dark ? .dark : .light
+                settle(0.3)
+                try require(petWindow.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == (dark ? .darkAqua : .aqua),
+                            "pet window did not follow live appearance changes")
+                let bitmap = try render(content, named: "synthetic-pet-care-\(language.rawValue)-\(dark ? "dark" : "light").png")
+                if language == .zhHans && dark {
+                    try require(luminance(light) - luminance(bitmap) > 0.2,
+                                "pet dark theme did not change its native surface luminance")
+                }
+                try require(content.bounds.size == NSSize(width: 400, height: 540)
+                            && shell.shellTestPanel.frame.size == widgetSize,
+                            "localizing pet controls changed a widget or companion footprint")
+            }
+        }
+        model.language = .zhHans
+        model.appearance = .light
+        for skin in PetEvolutionSkin.allCases {
+            model.choosePetSkin(skin)
+            model.buddyActivity = nil
+            settle(0.3)
+            try require(model.petProfile.skin == skin, "unlocked synthetic pet skin could not be equipped")
+            try render(content, named: "synthetic-pet-look-\(skin.rawValue).png")
+            for (style, compact, name, expected) in [
+                (StandaloneDisplayStyle.card, false, "standard", expectedCardSize),
+                (.card, true, "compact", expectedCompactSize),
+                (.duo, false, "duo", expectedDuoSize)
+            ] {
+                model.displayStyle = style
+                model.compact = compact
+                settle(0.5)
+                shell.shellTestResize()
+                try require(shell.shellTestPanel.frame.size == expected,
+                            "evolution accessories changed the fixed \(name) widget footprint")
+                if let widget = shell.shellTestPanel.contentView {
+                    try render(widget, named: "synthetic-pet-\(name)-\(skin.rawValue).png")
+                }
+            }
+        }
+        // Every new action has a deterministic mid-action visual without
+        // granting care XP or consuming any real Token data.
+        for action in PetCareAction.allCases {
+            let activity = BuddyActivity(action: action.buddyAction,
+                startedAt: Date().addingTimeInterval(-action.buddyAction.duration * 0.5), source: .play, petCare: action)
+            let preview = NSHostingView(rootView: PetBuddyPreview(character: .dragonGirl, skin: .starlight,
+                activity: activity, size: 120).padding(20).background(Color.white))
+            preview.frame = NSRect(x: 0, y: 0, width: 160, height: 160)
+            try render(preview, named: "synthetic-pet-action-\(action.rawValue).png")
+        }
+        try require(model.document.records == records && model.collector.tokenUsage == tokens
+                    && !model.collector.isRunning && !model.collector.isBusy && model.collector.lastAttemptAt == nil
+                    && !model.claudeCollector.isRunning && !model.claudeCollector.isBusy
+                    && model.claudeCollector.lastAttemptAt == nil,
+                    "pet interactions changed account readings or started a collector")
+        print("Synthetic pet companion verified: actual care-button dispatch and persistence, stable native window, three languages, both themes, seven care props, three evolution looks and all widget footprints; collectors stayed paused")
+    }
+
+    @MainActor
     private static func runChecks() throws {
         try checkDuoGeometry()
         for compact in [true, false] {
@@ -855,6 +1011,20 @@ struct DesktopShellCheck {
         app.finishLaunching()
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("yuliang-desktop-shell-check-\(UUID().uuidString)", isDirectory: true)
+        // Synthetic care history unlocks all looks before constructing the
+        // shared model. No account reading, real usage or user's store is used.
+        var syntheticPet = PetCompanionState()
+        let seedStart = Date().addingTimeInterval(-21 * 86_400)
+        for day in 0..<20 {
+            for index in 0..<8 {
+                let date = seedStart.addingTimeInterval(Double(day * 86_400 + index * 120))
+                syntheticPet.care(PetCareAction.allCases[index % PetCareAction.allCases.count], character: .dragonGirl, now: date)
+            }
+        }
+        try require(syntheticPet.profile(for: .dragonGirl).level >= PetEvolutionSkin.aurora.requiredLevel,
+                    "synthetic care fixture failed to unlock evolution looks")
+        syntheticPet.chooseSkin(.natural, character: .dragonGirl)
+        try StandalonePetStore(directory: directory).write(syntheticPet)
         let model = StandaloneModel(store: StandaloneQuotaStore(directory: directory))
         model.language = .zhHans
         try require(model.showDailyTokens && model.showLifetimeTokens, "both Token counters should be enabled by default")
@@ -1298,6 +1468,7 @@ struct DesktopShellCheck {
         shell.shellTestPopover.performClose(nil)
         settle(0.6)
         try require(!shell.shellTestPopover.isShown && panel.isVisible, "normal popover dismissal affected desktop card")
+        try checkPetCompanion(model: model, shell: shell, tokens: syntheticTokens)
         model.desktopVisible = false
         settle()
         try require(!panel.isVisible && !model.collector.isRunning, "last card hiding should only affect visibility")

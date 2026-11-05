@@ -31,6 +31,7 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
     private var characterPopover: NSPopover!
     private var browser: NSWindow?
     private var claudeBrowser: NSWindow?
+    private var petWindow: NSWindow?
     private var statusItem: NSStatusItem!
     private var subscriptions = Set<AnyCancellable>()
     private var resizeScheduled = false
@@ -107,6 +108,7 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
         model.onConnectClaude = { [weak self] in self?.openClaudeConnection() }
         model.onCompanionChange = { [weak self] enabled in self?.savePreference(enabled, key: "buddy.companion") }
         model.onChooseCharacter = { [weak self] surface in self?.chooseCharacter(from: surface) }
+        model.onShowPet = { [weak self] surface in self?.openPet(from: surface) }
         model.onPin = { [weak self] pinned in
             self?.applyPin(pinned)
             self?.savePreference(pinned, key: "card.pinned")
@@ -153,6 +155,7 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
             self.panel?.title = YuliangL10n.text("余量 · 桌面卡片")
             self.browser?.title = YuliangL10n.text("余量 · 用量与额度")
             self.claudeBrowser?.title = YuliangL10n.text("余量 · 连接 Claude")
+            self.petWindow?.title = PetUI.text("余量 · 伙伴成长", "Yuliang · Buddy", "余量 · 仲間の成長", language: language)
             self.lastStatusSignature = nil
             self.updateStatusItem()
             self.createMenu()
@@ -298,12 +301,13 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
         characterPopover?.appearance = appearance.nativeAppearance
         browser?.appearance = appearance.nativeAppearance
         claudeBrowser?.appearance = appearance.nativeAppearance
+        petWindow?.appearance = appearance.nativeAppearance
         scheduleResize()
     }
 
     private func transitionSurfaces() {
         guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
-        for window in [panel, browser, claudeBrowser, popover?.contentViewController?.view.window, characterPopover?.contentViewController?.view.window].compactMap({ $0 }) {
+        for window in [panel, browser, claudeBrowser, petWindow, popover?.contentViewController?.view.window, characterPopover?.contentViewController?.view.window].compactMap({ $0 }) {
             guard window.isVisible, let view = window.contentView else { continue }
             view.wantsLayer = true
             let fade = CATransition()
@@ -441,6 +445,32 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
     @objc private func showPanel() { showDesktop(reposition: true) }
     @objc private func connectAction() { openConnection() }
     @objc private func refreshAction() { model.refreshSelected() }
+    @objc private func petAction() { openPet(from: .desktop) }
+
+    private func openPet(from surface: StandaloneSurface) {
+        StandaloneSettingsPresenter.close()
+        characterPopover.performClose(nil)
+        if petWindow == nil {
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 540),
+                                  styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            window.identifier = NSUserInterfaceItemIdentifier("yuliang.pet.window")
+            window.isReleasedWhenClosed = false
+            window.contentView = NSHostingView(rootView: StandalonePetView(model: model))
+            petWindow = window
+        }
+        guard let window = petWindow else { return }
+        window.title = PetUI.text("余量 · 伙伴成长", "Yuliang · Buddy", "余量 · 仲間の成長", language: model.language)
+        window.appearance = model.appearance.nativeAppearance
+        let anchor = surface == .desktop ? panel.frame : (popoverHost.view.window?.frame ?? panel.frame)
+        let visible = (NSScreen.screens.first { $0.frame.intersects(anchor) } ?? NSScreen.main)?.visibleFrame
+        if let visible {
+            let x = anchor.maxX + 8 + 400 <= visible.maxX ? anchor.maxX + 8 : anchor.minX - 408
+            window.setFrameOrigin(NSPoint(x: max(visible.minX, min(x, visible.maxX - 400)),
+                y: max(visible.minY, min(anchor.maxY - window.frame.height, visible.maxY - window.frame.height))))
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+    }
 
     private func chooseCharacter(from surface: StandaloneSurface) {
         if characterPopover.isShown { characterPopover.performClose(nil); return }
@@ -509,6 +539,7 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
         appMenu.addItem(withTitle: YuliangL10n.text("找回桌面卡片"), action: #selector(showPanel), keyEquivalent: "0").target = self
         appMenu.addItem(withTitle: YuliangL10n.text("用量与额度详情"), action: #selector(connectAction), keyEquivalent: "l").target = self
         appMenu.addItem(withTitle: YuliangL10n.text("立即刷新"), action: #selector(refreshAction), keyEquivalent: "r").target = self
+        appMenu.addItem(withTitle: PetUI.text("伙伴成长与收藏", "Buddy care & collection", "仲間の成長とコレクション", language: model.language), action: #selector(petAction), keyEquivalent: "p").target = self
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: YuliangL10n.text("退出余量"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         app.submenu = appMenu
@@ -530,6 +561,8 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
         configure(model: model, startCollector: false, showOnLaunch: false)
     }
     var shellTestConnectionWindow: NSWindow? { browser }
+    var shellTestPetWindow: NSWindow? { petWindow }
+    func shellTestShowPet() { openPet(from: .desktop) }
     var shellTestPanel: NSPanel { panel }
     var shellTestPopover: NSPopover { popover }
     var shellTestCharacterPopover: NSPopover { characterPopover }
@@ -545,6 +578,7 @@ final class StandaloneAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
         characterPopover.performClose(nil)
         popover.performClose(nil)
         panel.orderOut(nil)
+        petWindow?.close()
         NSStatusBar.system.removeStatusItem(statusItem)
         subscriptions.removeAll()
     }

@@ -13,6 +13,7 @@ final class CodexQuotaCollector: NSObject, ObservableObject {
     let interval: TimeInterval = 60
     let isFixture: Bool
     var onSnapshot: ((SnapshotEnvelope) throws -> Void)?
+    var onTokenUsage: ((TokenUsageSnapshot) -> Void)?
 
     @Published private(set) var tokenUsage: TokenUsageSnapshot?
     @Published private(set) var tokenUsageState: TokenUsageReadingState = .unknown
@@ -236,6 +237,7 @@ final class CodexQuotaCollector: NSObject, ObservableObject {
                 tokenUsageState = .available
                 tokenUsageStatus = value.lifetimeTokens == nil && value.serverDayTokens == nil
                     ? "服务端暂未返回 Token 数值" : "已读取账号 Token 用量"
+                onTokenUsage?(value)
             } catch {
                 tokenUsageState = .invalid
                 tokenUsageStatus = "Token 字段无法验证，保留上次记录"
@@ -269,6 +271,7 @@ final class CodexQuotaCollector: NSObject, ObservableObject {
         tokenUsageState = .available
         tokenUsageLastSuccessAt = snapshot.observedAt
         tokenUsageStatus = "合成 UI 测试数据"
+        onTokenUsage?(snapshot)
     }
 
     /// Exercises the real quota decoding/acceptance/error path with explicit

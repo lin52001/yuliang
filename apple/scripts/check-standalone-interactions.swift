@@ -73,6 +73,15 @@ private final class InteractionRig {
                    "合成回调不得启动任一平台的真实采集")
     }
 
+    func tokens(total: Int64, daily: Int64, seconds: TimeInterval = 0,
+                day: String = "2026-11-05") throws -> TokenUsageSnapshot {
+        let data = try JSONSerialization.data(withJSONObject: [
+            "summary": ["lifetimeTokens": total],
+            "dailyUsageBuckets": [["startDate": day, "tokens": daily]]
+        ])
+        return try TokenUsageSnapshot.decode(data, observedAt: base.addingTimeInterval(seconds))
+    }
+
     var value: QuotaPresentation { QuotaPresentation(document: model.document) }
 }
 
@@ -88,6 +97,7 @@ struct StandaloneInteractionVerification {
             defer { try? FileManager.default.removeItem(at: root) }
             try run(directory: root)
             print("Standalone互动隔离验证通过：23组。仅使用合成额度和临时存储，未启动平台采集或读取认证。")
+            print("Standalone宠物隔离验证通过：7组。照顾、Token成长、切换、皮肤、损坏恢复、存储失败和额度联动均使用临时文件。")
         } catch {
             fputs("Standalone互动隔离验证失败：\(error)\n", stderr)
             exit(1)
@@ -203,12 +213,20 @@ struct StandaloneInteractionVerification {
             try expect(allowed.isSuperset(of: [.jump, .dance, .spin]), "随机互动池应包含新增的跳跃、摇摆和转圈")
             try expect(!allowed.contains(.eating) && !allowed.contains(.idle), "随机点击不能制造进食或空闲事件")
             var last: BuddyAction?
+            var lastActivityID: UUID?
             for _ in 0..<12 {
                 rig.model.pat()
                 let action = rig.model.buddyActivity?.action
-                try expect(action.map { allowed.contains($0) } == true, "点击应从可选娱乐动作中选择")
-                try expect(action != last, "连续点击不能重复同一动作")
+                if let care = rig.model.buddyActivity?.petCare {
+                    try expect(action == care.buddyAction && rig.model.buddyActivity?.source == .play,
+                               "点击发现的照顾应带明确动作标识，娱乐水果不冒充真实消耗")
+                } else {
+                    try expect(action.map { allowed.contains($0) } == true, "普通点击应从可选娱乐动作中选择")
+                }
+                try expect(action != last, "照顾与普通互动连续点击不能重复同一动作")
+                try expect(rig.model.buddyActivity?.id != lastActivityID, "每次点击应有实际可见的动作回应")
                 last = action
+                lastActivityID = rig.model.buddyActivity?.id
             }
             try expect(rig.model.document.records == records, "摸头等娱乐互动不修改真实额度")
             let character = rig.model.document.preferences.character
@@ -708,6 +726,209 @@ struct StandaloneInteractionVerification {
             try expect(rig.value.remainingPercent == 85, "连续真实下降应仅把95%更新为85%")
             let persisted = try rig.model.store.read().records
             try expect(persisted == expectedRecords, "自主陪伴不能向磁盘补写虚假消费")
+        }
+
+        // Pet 1. Actual model care saves its own journal before showing a
+        // reward. Immediate repeat/different-action taps cannot farm growth.
+        do {
+            let rig = try InteractionRig(parent: directory, name: "pet-care-persistence")
+            try rig.accept(rig.snapshot(80))
+            let records = rig.model.document.records
+            let quotaBytes = try Data(contentsOf: rig.directory.appendingPathComponent("quota.json"))
+            rig.model.care(.fruit)
+            let pet = rig.model.petProfile
+            let activity = rig.model.buddyActivity?.id
+            try expect(pet.experience == 3 && pet.careCount == 1 && pet.satiety == 81,
+                       "照顾水果应实际改变伙伴状态与有限成长")
+            try expect(pet.badges == [.firstCare] && rig.model.buddyActivity?.petCare == .fruit,
+                       "首次照顾应解锁一次徽章并播放专属水果动作")
+            let petFile = rig.directory.appendingPathComponent("pet.json")
+            let bytes = try Data(contentsOf: petFile)
+            let disk = try rig.model.petStore.read()
+            try expect(disk == rig.model.petState, "显示的成长必须先写入独立宠物文件")
+            let restored = StandaloneModel(store: rig.model.store)
+            try expect(restored.petState == disk && restored.petProfile == pet,
+                       "重启应恢复成长、需要值和徽章，不重复授奖")
+            rig.model.care(.fruit)
+            rig.model.care(.milk)
+            try expect(rig.model.petProfile == pet && rig.model.buddyActivity?.id != activity
+                       && rig.model.buddyActivity?.petCare == .milk,
+                       "照顾冷却只限制状态与奖励，点击仍应播放所选牛奶互动")
+            try expect(rig.model.petCooldown(for: .fruit) > 80 && rig.model.petCooldown(for: .milk) > 0,
+                       "照顾冷却应向菜单和面板提供可读取的剩余时间")
+            try expect(try Data(contentsOf: petFile) == bytes, "冷却点击不能改写宠物记录")
+            try expect(rig.model.document.records == records
+                       && (try Data(contentsOf: rig.directory.appendingPathComponent("quota.json"))) == quotaBytes,
+                       "照顾、徽章和恢复均不得修改额度文件或采样时间")
+        }
+
+        // Pet 2. The collector's real callback path establishes one baseline,
+        // then awards only matching fresh deltas. Quota changes earn no XP.
+        do {
+            let rig = try InteractionRig(parent: directory, name: "pet-token-callback")
+            try rig.accept(rig.snapshot(80))
+            try rig.accept(rig.snapshot(79, seconds: 1))
+            try expect(rig.model.petProfile.experience == 0 && rig.model.petProfile.confirmedTokens == 0,
+                       "额度百分比下降只能播放陪伴，不能推算Token或授予成长")
+            let records = rig.model.document.records
+            rig.model.collector.shellTestSetTokenUsage(try rig.tokens(total: 1_000_000, daily: 200_000))
+            try expect(rig.model.petProfile.experience == 0 && rig.model.petProfile.badges.isEmpty,
+                       "首次Token读取必须仅建基线，不能奖励历史累计")
+            rig.model.collector.shellTestSetTokenUsage(try rig.tokens(total: 1_010_000, daily: 210_000, seconds: 60))
+            let pet = rig.model.petProfile
+            try expect(pet.experience == 2 && pet.confirmedTokens == 10_000 && pet.badges == [.tokenGrowth],
+                       "同日连续双计数增量应通过真实采集回调累积成长")
+            rig.model.collector.shellTestSetTokenUsage(try rig.tokens(total: 1_010_000, daily: 210_000, seconds: 60))
+            rig.model.collector.shellTestSetTokenUsage(try rig.tokens(total: 1_010_000, daily: 210_000, seconds: 61))
+            rig.model.collector.shellTestSetTokenUsage(try rig.tokens(total: 9_000_000, daily: 8_200_000, seconds: 59))
+            try expect(rig.model.petProfile == pet, "重放、旧样本和新时间相同计数不能重复授奖")
+            let restored = StandaloneModel(store: rig.model.store)
+            restored.collector.shellTestSetTokenUsage(try rig.tokens(total: 1_015_000, daily: 215_000, seconds: 62))
+            try expect(restored.petProfile.experience == 3 && restored.petProfile.confirmedTokens == 15_000
+                       && restored.petProfile.badges == [.tokenGrowth],
+                       "重启后应沿持久基线只奖励新增量，不重领旧Token徽章")
+            try expect(restored.document.records == records && rig.model.document.records == records,
+                       "Token成长与重启不能改写订阅额度")
+            try expect(!restored.collector.isRunning && !restored.collector.isBusy,
+                       "合成Token路径不得启动真实平台采集")
+        }
+
+        // Pet 3. Profiles belong to their own character. Changing the selected
+        // buddy cannot copy XP, cooldowns, badges or replay global Token deltas.
+        do {
+            let rig = try InteractionRig(parent: directory, name: "pet-character-isolation")
+            try rig.accept(rig.snapshot(80))
+            let records = rig.model.document.records
+            rig.model.selectCharacter(.dragonGirl)
+            rig.model.care(.groom)
+            let dragon = rig.model.petProfile
+            rig.model.collector.shellTestSetTokenUsage(try rig.tokens(total: 0, daily: 0, seconds: 120))
+            rig.model.selectCharacter(.swordCat)
+            try expect(rig.model.petProfile.experience == 0 && rig.model.petProfile.careCount == 0
+                       && rig.model.petProfile.badges.isEmpty && rig.model.petCooldown(for: .groom) == 0,
+                       "新选择伙伴应有自己的成长与冷却，而不是继承上一个角色")
+            rig.model.care(.rest)
+            try expect(rig.model.petProfile.experience == 3
+                       && Set(rig.model.petProfile.badges) == Set([.firstCare, .restful]),
+                       "另一个伙伴的休息应独立授予照顾和休息徽章")
+            rig.model.selectCharacter(.dragonGirl)
+            try expect(rig.model.petProfile == dragon, "切回伙伴应恢复它原有的状态与徽章")
+            rig.model.collector.shellTestSetTokenUsage(try rig.tokens(total: 0, daily: 0, seconds: 120))
+            try expect(rig.model.petProfile == dragon, "切换角色不能重复领取旧Token样本")
+            try expect(rig.model.document.records == records, "角色成长隔离不得改变额度记录")
+        }
+
+        // Pet 4. Locked skins cannot be selected through the model, bypassing
+        // the UI. An allowed appearance persists without granting experience.
+        do {
+            let rig = try InteractionRig(parent: directory, name: "pet-skin-gating")
+            try rig.accept(rig.snapshot(80))
+            rig.model.care(.highFive)
+            let state = rig.model.petState
+            let activity = rig.model.buddyActivity?.id
+            let bytes = try Data(contentsOf: rig.directory.appendingPathComponent("pet.json"))
+            rig.model.choosePetSkin(.starlight)
+            rig.model.choosePetSkin(.aurora)
+            try expect(rig.model.petState == state && rig.model.petProfile.skin == .natural
+                       && rig.model.buddyActivity?.id == activity,
+                       "未达等级的皮肤不能由模型入口绕过解锁")
+            try expect(try Data(contentsOf: rig.directory.appendingPathComponent("pet.json")) == bytes,
+                       "选择锁定皮肤不能写磁盘或偷偷增加经验")
+            rig.model.choosePetSkin(.natural)
+            try expect(rig.model.petProfile.experience == 3 && rig.model.petProfile.skin == .natural,
+                       "已解锁外观只改变穿戴，不能增加成长")
+        }
+
+        // Pet 5. A corrupt pet journal is preserved and blocks all pet writes;
+        // usable quota and harmless ordinary play still work independently.
+        do {
+            let petDirectory = directory.appendingPathComponent("pet-corrupt-on-load", isDirectory: true)
+            try FileManager.default.createDirectory(at: petDirectory, withIntermediateDirectories: true)
+            let petFile = petDirectory.appendingPathComponent("pet.json")
+            let broken = Data("{broken-pet-fixture".utf8)
+            try broken.write(to: petFile, options: .atomic)
+            let rig = try InteractionRig(parent: directory, name: "pet-corrupt-on-load")
+            try expect(rig.model.petStorageError != nil, "损坏成长文件必须暴露错误，不静默覆盖")
+            try rig.accept(rig.snapshot(80))
+            let records = rig.model.document.records
+            rig.model.care(.fruit)
+            rig.model.choosePetSkin(.natural)
+            rig.model.collector.shellTestSetTokenUsage(try rig.tokens(total: 1_000, daily: 100))
+            rig.model.collector.shellTestSetTokenUsage(try rig.tokens(total: 6_000, daily: 5_100, seconds: 60))
+            try expect(try Data(contentsOf: petFile) == broken, "照顾、皮肤和Token回调均不得覆盖损坏的原文件")
+            try expect(rig.model.petProfile.experience == 0 && rig.model.petProfile.careCount == 0,
+                       "成长无法持久保存时，界面不能先授予经验或徽章")
+            rig.model.play(.wave)
+            try expect(rig.model.buddyActivity?.action == .wave && rig.model.document.records == records,
+                       "成长存储错误不能破坏普通互动或独立的额度记录")
+        }
+
+        // Pet 6. If the file cannot be committed, no local reward or visual care
+        // is published. The original blocker remains untouched for recovery.
+        do {
+            let rig = try InteractionRig(parent: directory, name: "pet-write-failure")
+            try rig.accept(rig.snapshot(80))
+            let petFile = rig.directory.appendingPathComponent("pet.json", isDirectory: true)
+            try FileManager.default.createDirectory(at: petFile, withIntermediateDirectories: true)
+            let blocker = petFile.appendingPathComponent("preserve-fixture.txt")
+            let original = Data("keep-me".utf8)
+            try original.write(to: blocker)
+            rig.model.care(.playBall)
+            try expect(rig.model.petStorageError != nil && rig.model.petProfile.experience == 0
+                       && rig.model.petProfile.careCount == 0 && rig.model.buddyActivity == nil,
+                       "宠物文件写入失败时不能先播放已保存的照顾或发经验")
+            try expect(try Data(contentsOf: blocker) == original, "失败不能清空原有阻挡文件")
+            try expect(rig.value.remainingPercent == 80 && (try rig.model.store.read()).records == rig.model.document.records,
+                       "宠物写入失败不得污染额度与额度存储")
+        }
+
+        // Pet 7. The principal rail follows actual quota in both directions;
+        // pet progress is independent. Standard/compact rails and Duo orbit all
+        // consume the identical presentation percentage and animation trigger.
+        do {
+            let rig = try InteractionRig(parent: directory, name: "pet-quota-linked-rail")
+            try rig.accept(rig.snapshot(80))
+            let before = rig.value.remainingPercent
+            try expect(before == 80 && !rig.model.animateQuota, "首次额度建立基线，不能从虚构起点播放消耗")
+            let originalPet = rig.model.petProfile
+            try rig.accept(rig.snapshot(60, seconds: 1))
+            let remaining = rig.value.remainingPercent
+            try expect(remaining == 60 && rig.model.animateQuota,
+                       "可信80%到60%必须保存实际余量并触发主进度条连续过渡")
+            for (width, avatar): (Double, Double) in [(133, 45), (274, 56)] {
+                let old = QuotaRailGeometry(width: width, avatarSize: avatar, remainingPercent: before)
+                let new = QuotaRailGeometry(width: width, avatarSize: avatar, remainingPercent: remaining)
+                try expect(new.fillWidth < old.fillWidth && new.markerCenterX < old.markerCenterX
+                           && abs(new.fillWidth - width * 0.6) < 0.000_001
+                           && abs(new.markerCenterX - new.fillWidth) < 0.000_001,
+                           "标准和紧凑模式的填充与人物应同时沿真实额度边界移动")
+            }
+            let duoBefore = QuotaDuoGeometry(size: 104, remainingPercent: before)
+            let duoAfter = QuotaDuoGeometry(size: 104, remainingPercent: remaining)
+            let theta = 0.6 * Double.pi * 2 - Double.pi / 2
+            try expect(duoAfter.progress == 60 && duoAfter.isKnown
+                       && abs(duoAfter.markerX - (duoAfter.side / 2 + duoAfter.ringDiameter / 2 * cos(theta))) < 0.000_001
+                       && abs(duoAfter.markerY - (duoAfter.side / 2 + duoAfter.ringDiameter / 2 * sin(theta))) < 0.000_001
+                       && (duoAfter.markerX != duoBefore.markerX || duoAfter.markerY != duoBefore.markerY),
+                       "Duo人物轨道端点必须使用同一实际60%额度，不能使用宠物经验或固定位置")
+            try expect(rig.model.petProfile == originalPet,
+                       "主额度进度下降不能推算Token或给宠物增加经验")
+            let ended = rig.model.now.addingTimeInterval(4)
+            rig.model.advanceClock(to: ended)
+            try expect(rig.model.buddyActivity == nil, "合法消耗的有限进食动作应如期结束")
+            try rig.accept(rig.snapshot(100, seconds: 2), now: ended.addingTimeInterval(1))
+            try expect(rig.value.remainingPercent == 100 && rig.model.animateQuota
+                       && rig.model.buddyActivity == nil,
+                       "同周期实际回升100%也应连续更新，但不能当作消耗再喂食")
+            let full = QuotaRailGeometry(width: 274, avatarSize: 56, remainingPercent: rig.value.remainingPercent)
+            let duoFull = QuotaDuoGeometry(size: 104, remainingPercent: rig.value.remainingPercent)
+            try expect(full.fillWidth == 274 && full.markerLeadingX + full.avatarSize == 274
+                       && duoFull.progress == 100 && abs(duoFull.markerX - duoFull.side / 2) < 0.000_001
+                       && abs(duoFull.markerY - (duoFull.side - duoFull.ringDiameter) / 2) < 0.000_001,
+                       "实际100%时主条应填满，人物保持在可见端点，Duo回到满环顶端")
+            try expect(rig.model.petProfile == originalPet
+                       && (try rig.model.store.read()).records == rig.model.document.records,
+                       "额度升降必须真实保存，且始终不污染独立的宠物成长")
         }
 
     }

@@ -126,7 +126,12 @@ final class StandaloneModel: ObservableObject {
     @Published var animateQuota = false
     @Published var compact = false { didSet { onResize?(compact) } }
     @Published var language = YuliangLanguage.system {
-        didSet { YuliangL10n.language = language; onLanguageChange?(language) }
+        didSet {
+            YuliangL10n.language = language
+            petNoticeUntil = nil
+            petNotice = petStorageError
+            onLanguageChange?(language)
+        }
     }
     @Published var pinned = true { didSet { onPin?(pinned) } }
     @Published var positionLocked = false { didSet { onPositionLock?(positionLocked) } }
@@ -139,6 +144,12 @@ final class StandaloneModel: ObservableObject {
     @Published var displayStyle = StandaloneDisplayStyle.card { didSet { onStyleChange?() } }
     @Published var buddyActivity: BuddyActivity?
     @Published var buddyFeedback = BuddyFeedbackState()
+    @Published private(set) var petState = PetCompanionState()
+    @Published private(set) var petNotice: String?
+    @Published private(set) var petStorageError: String?
+    private var petStorageAvailable = true
+    private var petNoticeUntil: Date?
+    private var petNoticeSymbol = "heart.fill"
     @Published var companionEnabled = true { didSet { onCompanionChange?(companionEnabled) } }
     var companionVisible = true
     var companionSleeping = false
@@ -165,10 +176,12 @@ final class StandaloneModel: ObservableObject {
     let collector: CodexQuotaCollector
     let claudeCollector: QuotaWebCollector
     let store: StandaloneQuotaStore
+    let petStore: StandalonePetStore
     var onConnect: (() -> Void)?
     var onConnectClaude: (() -> Void)?
     var onCompanionChange: ((Bool) -> Void)?
     var onChooseCharacter: ((StandaloneSurface) -> Void)?
+    var onShowPet: ((StandaloneSurface) -> Void)?
     var onResize: ((Bool) -> Void)?
     var onPin: ((Bool) -> Void)?
     var onPositionLock: ((Bool) -> Void)?
@@ -183,8 +196,15 @@ final class StandaloneModel: ObservableObject {
 
     init(store: StandaloneQuotaStore = .shared) {
         self.store = store
+        self.petStore = StandalonePetStore(directory: store.directory)
         self.collector = CodexQuotaCollector()
         self.claudeCollector = QuotaWebCollector()
+        do { petState = try petStore.read() }
+        catch {
+            petStorageAvailable = false
+            petStorageError = PetUI.text("成长记录未能读取，原文件已保留", "Growth record could not be read. The original is preserved.", "成長記録を読み込めません。元のファイルを保持しました。")
+            petNotice = petStorageError
+        }
         do { document = try store.read() }
         catch { self.error = error.localizedDescription }
         if !FileManager.default.fileExists(atPath: store.directory.appendingPathComponent("quota.json").path)
@@ -206,6 +226,7 @@ final class StandaloneModel: ObservableObject {
         collector.onSnapshot = { [weak self] snapshot in
             try self?.receive(snapshot)
         }
+        collector.onTokenUsage = { [weak self] usage in self?.receivePetUsage(usage) }
         claudeCollector.onSnapshot = { [weak self] snapshot in try self?.receive(snapshot) }
         clock = Timer.publish(every: 1, on: .main, in: .common).autoconnect().sink { [weak self] date in
             self?.advanceClock(to: date)
@@ -247,7 +268,17 @@ final class StandaloneModel: ObservableObject {
             isSleeping: companionSleeping, reduceMotion: companionReduceMotion,
             isEnabled: companionEnabled)
         if let moment = companionSchedule.tick(now: date, context: context, character: document.preferences.character), buddyFeedback.accompany(moment, now: date) {
-            buddyActivity = BuddyActivity(action: moment.action, startedAt: date, source: .companion)
+            let careVisual: PetCareAction?
+            switch moment.action {
+            case .nap: careVisual = .rest
+            case .jump: careVisual = .playBall
+            case .nuzzle: careVisual = .groom
+            case .peek: careVisual = .explore
+            default: careVisual = nil
+            }
+            // Idle play is visual companionship. It never grants care rewards
+            // or changes fullness without an explicit care action.
+            buddyActivity = BuddyActivity(action: moment.action, startedAt: date, source: .companion, petCare: careVisual)
             scheduleFeedbackTransition()
         }
     }
@@ -276,6 +307,12 @@ final class StandaloneModel: ObservableObject {
         } catch { self.error = error.localizedDescription }
     }
     func pat() {
+        // A tap can discover a new care interaction; right-click always offers
+        // an explicit choice. Cooldown limits rewards, never ordinary play.
+        let careChoices = PetCareAction.allCases.filter { petCooldown(for: $0) <= 0 && $0.buddyAction != lastPlay }
+        if Int.random(in: 0..<3) == 0, let action = careChoices.randomElement() {
+            care(action); return
+        }
         let choices = document.preferences.character.companionActions.filter { $0 != lastPlay }
         let action = choices.randomElement() ?? .pat
         play(action)
@@ -284,12 +321,99 @@ final class StandaloneModel: ObservableObject {
         guard !isEatingUsage, action != .idle else { return }
         lastPlay = action
         now = Date()
+        petNoticeUntil = nil
         buddyActivity = BuddyActivity(action: action, startedAt: now, source: .play)
         buddyFeedback.interact(action, now: now, character: document.preferences.character)
         companionSchedule.postpone(after: now)
         scheduleFeedbackTransition()
     }
     func feed() { play(.eating) }
+    var petProfile: PetProfileSnapshot { petState.profile(for: document.preferences.character, now: now) }
+    var petCareAvailable: Bool { petStorageAvailable && !isEatingUsage }
+    func petCooldown(for action: PetCareAction) -> TimeInterval {
+        petState.cooldownRemaining(for: action, character: document.preferences.character, now: now)
+    }
+    private func petText(_ zh: String, _ en: String, _ ja: String) -> String {
+        PetUI.text(zh, en, ja, language: language)
+    }
+    @discardableResult private func savePet(_ next: PetCompanionState) -> Bool {
+        guard petStorageAvailable else { petNotice = petStorageError; return false }
+        do {
+            petState = try petStore.write(next)
+            petStorageError = nil
+            return true
+        } catch {
+            petStorageError = petText("成长暂未保存，请稍后再试", "Growth could not be saved. Try again shortly.", "成長を保存できませんでした。後でもう一度お試しください。")
+            petNotice = petStorageError
+            return false
+        }
+    }
+    func care(_ action: PetCareAction) {
+        guard !isEatingUsage else { return }
+        now = Date()
+        var next = petState
+        let event = next.care(action, character: document.preferences.character, now: now)
+        guard event.accepted else {
+            guard event.reason == .cooldown else { return }
+            buddyActivity = BuddyActivity(action: action.buddyAction, startedAt: now, source: .play, petCare: action)
+            lastPlay = action.buddyAction
+            buddyFeedback.interact(action.buddyAction, now: now, character: document.preferences.character)
+            companionSchedule.postpone(after: now)
+            petNotice = action.caption(language: language)
+            petNoticeUntil = now.addingTimeInterval(5.5)
+            petNoticeSymbol = action.symbol
+            scheduleFeedbackTransition()
+            return
+        }
+        guard savePet(next) else { return }
+        lastPlay = action.buddyAction
+        buddyActivity = BuddyActivity(action: action.buddyAction, startedAt: now, source: .play, petCare: action)
+        buddyFeedback.interact(action.buddyAction, now: now, character: document.preferences.character)
+        petNoticeSymbol = action.symbol
+        petNotice = action.caption(language: language)
+        if let badge = event.newBadges.first {
+            petNotice = petText("解锁徽章 · ", "Badge unlocked · ", "実績を獲得 · ") + badge.title(language: language)
+            petNoticeSymbol = badge.symbol
+        }
+        if event.evolved {
+            petNotice = petText("新的进化装扮解锁啦", "A new evolution look is unlocked", "新しい進化の装いを獲得したよ")
+            petNoticeSymbol = "sparkles"
+        }
+        petNoticeUntil = now.addingTimeInterval(5.5)
+        companionSchedule.postpone(after: now)
+        scheduleFeedbackTransition()
+    }
+    func choosePetSkin(_ skin: PetEvolutionSkin) {
+        now = Date()
+        var next = petState
+        guard next.chooseSkin(skin, character: document.preferences.character, now: now), savePet(next) else { return }
+        petNotice = skin.title(language: language)
+        petNoticeSymbol = "sparkles"
+        petNoticeUntil = now.addingTimeInterval(5.5)
+        if !isEatingUsage {
+            buddyActivity = BuddyActivity(action: .celebrate, startedAt: now, source: .play)
+        }
+    }
+    private func receivePetUsage(_ usage: TokenUsageSnapshot) {
+        guard petStorageAvailable else { return }
+        let observation = PetTokenObservation(lifetimeTokens: usage.lifetimeTokens,
+            serverDayTokens: usage.serverDayTokens, serverDay: usage.serverDay, observedAt: usage.observedAt)
+        var next = petState
+        let event = next.observe(observation, character: document.preferences.character)
+        guard event.reason != .invalid, next != petState, savePet(next) else { return }
+        guard event.accepted else { return }
+        if companionVisible && !companionSleeping && !StandaloneMenuTracking.isActive && buddyActivity == nil {
+            let treat: PetCareAction = petProfile.confirmedTokens / PetCompanionState.tokensPerExperience % 2 == 0 ? .milk : .fruit
+            buddyActivity = BuddyActivity(action: treat.buddyAction, startedAt: Date(), source: .usage, petCare: treat)
+        }
+        if !event.newBadges.isEmpty || event.evolved {
+            petNotice = event.evolved
+                ? petText("伙伴进化啦，新的装扮已解锁", "Your buddy evolved. A new look is unlocked.", "仲間が進化したよ。新しい装いを獲得。")
+                : petText("一起成长 · 新徽章解锁", "Growing together · new badge", "一緒に成長 · 新しい実績")
+            petNoticeSymbol = event.evolved ? "sparkles" : "leaf.fill"
+            petNoticeUntil = Date().addingTimeInterval(5.5)
+        }
+    }
     var availableCharacters: [QuotaCharacter] {
         let legacy: [QuotaCharacter] = Bundle.main.url(forResource: "anime-satiety-atlas-v1", withExtension: "png") == nil
             ? [] : [.kuromi, .myMelody]
@@ -300,6 +424,8 @@ final class StandaloneModel: ObservableObject {
         let eating = isEatingUsage ? buddyActivity : nil
         preference { $0.character = character }
         guard document.preferences.character == character else { return }
+        petNoticeUntil = nil
+        petNotice = petStorageError
         buddyActivity = eating ?? BuddyActivity(action: .wave, startedAt: Date(), source: .play)
         if eating == nil {
             now = Date()
@@ -331,9 +457,14 @@ final class StandaloneModel: ObservableObject {
             case .fresh: issue = value.remainingPercent == nil ? YuliangL10n.text("官方未提供额度比例") : nil
             }
         }
-        return buddyFeedback.message(at: now,
+        let message = buddyFeedback.message(at: now,
                                      refreshTimeLabel: value.observedAt.map { StandaloneDateFormat.string($0, dateStyle: .omitted, timeStyle: .standard) } ?? "",
                                      error: issue, character: document.preferences.character)
+        if message.kind != .error && message.kind != .refresh,
+           let deadline = petNoticeUntil, now < deadline, let petNotice {
+            return .init(kind: .interaction, text: petNotice, symbol: petNoticeSymbol)
+        }
+        return message
     }
     private func scheduleFeedbackTransition() {
         feedbackTransition?.cancel()
@@ -462,6 +593,8 @@ final class StandaloneSettingsPanelController: NSViewController {
     private let interactionAction: (BuddyAction) -> Void
     private let interactionEnabled: () -> Bool
     private let fallbackCharacter: QuotaCharacter?
+    private var careAction: ((PetCareAction) -> Void)?
+    private var openPet: (() -> Void)?
     private var documentView: NSView?
     private var nextY: CGFloat = 0
 
@@ -470,16 +603,20 @@ final class StandaloneSettingsPanelController: NSViewController {
         page = kind == .settings ? .home : .interactions
         interactionAction = { model.play($0) }
         interactionEnabled = { !model.isEatingUsage }
+        careAction = model.care
+        openPet = { model.onShowPet?(surface) }
         fallbackCharacter = nil
         super.init(nibName: nil, bundle: nil)
         model.objectWillChange.sink { [weak self] _ in self?.scheduleStateRefresh() }.store(in: &subscriptions)
         model.collector.objectWillChange.sink { [weak self] _ in self?.scheduleStateRefresh() }.store(in: &subscriptions)
         model.claudeCollector.objectWillChange.sink { [weak self] _ in self?.scheduleStateRefresh() }.store(in: &subscriptions)
     }
-    init(action: @escaping (BuddyAction) -> Void, enabled: Bool, character: QuotaCharacter? = nil) {
+    init(action: @escaping (BuddyAction) -> Void, enabled: Bool, character: QuotaCharacter? = nil,
+         onCare: ((PetCareAction) -> Void)? = nil, onOpenPet: (() -> Void)? = nil) {
         model = nil; surface = .desktop; kind = .interactions; page = .interactions
         interactionAction = action; interactionEnabled = { enabled }
         fallbackCharacter = character
+        careAction = onCare; openPet = onOpenPet
         super.init(nibName: nil, bundle: nil)
     }
     required init?(coder: NSCoder) { fatalError("Settings are created from the current model") }
@@ -579,6 +716,7 @@ final class StandaloneSettingsPanelController: NSViewController {
             case .home:
                 pair((YuliangL10n.text("用量与额度详情"), "details", { model.onConnect?() }),
                      (YuliangL10n.text("立即刷新"), "refresh", { model.refreshSelected() }))
+                row(PetUI.text("伙伴成长与收藏", "Buddy care & collection", "仲間の成長とコレクション", language: model.language), id: "pet.open") { model.onShowPet?(self.surface) }
                 navigation(YuliangL10n.text("额度来源"), page: .sources, id: "sources")
                 navigation(YuliangL10n.text("小组件样式"), page: .styles, id: "styles")
                 navigation(YuliangL10n.text("显示内容"), page: .display, id: "display")
@@ -654,6 +792,16 @@ final class StandaloneSettingsPanelController: NSViewController {
         refreshState()
     }
     private func appendInteractions() {
+        if let openPet {
+            row(PetUI.text("伙伴成长与收藏", "Buddy care & collection", "仲間の成長とコレクション", language: model?.language ?? .system), id: "pet.open", action: openPet)
+        }
+        if let careAction {
+            let enabled = interactionEnabled
+            for care in PetCareAction.allCases {
+                row(care.title(language: model?.language ?? .system), id: "care." + care.rawValue,
+                    enabled: enabled) { careAction(care) }
+            }
+        }
         let character = model?.document.preferences.character ?? fallbackCharacter
         if let character {
             row(character.signatureLabel, id: "interaction.signature", enabled: interactionEnabled) { [interactionAction] in
@@ -796,9 +944,11 @@ enum StandaloneSettingsPresenter {
         close()
         present(StandaloneSettingsPanelController(model: model, surface: surface, kind: kind), anchor: anchor, appearance: model.appearance.nativeAppearance)
     }
-    static func showInteractions(action: @escaping (BuddyAction) -> Void, enabled: Bool, character: QuotaCharacter? = nil, anchor: NSView, appearance: NSAppearance?) {
+    static func showInteractions(action: @escaping (BuddyAction) -> Void, enabled: Bool, character: QuotaCharacter? = nil,
+                                 onCare: ((PetCareAction) -> Void)? = nil, onOpenPet: (() -> Void)? = nil,
+                                 anchor: NSView, appearance: NSAppearance?) {
         close()
-        present(StandaloneSettingsPanelController(action: action, enabled: enabled, character: character), anchor: anchor, appearance: appearance)
+        present(StandaloneSettingsPanelController(action: action, enabled: enabled, character: character, onCare: onCare, onOpenPet: onOpenPet), anchor: anchor, appearance: appearance)
     }
     private static func present(_ controller: StandaloneSettingsPanelController, anchor: NSView, appearance: NSAppearance?) {
         let current = Session(controller: controller, anchor: anchor, appearance: appearance)
@@ -823,11 +973,15 @@ struct StandaloneBuddyContextMenu: NSViewRepresentable {
     let action: (BuddyAction) -> Void
     var enabled = true
     var character: QuotaCharacter? = nil
+    var onCare: ((PetCareAction) -> Void)? = nil
+    var onOpenPet: (() -> Void)? = nil
     @Environment(\.colorScheme) private var colorScheme
     final class ContextView: NSView {
         var action: ((BuddyAction) -> Void)?
         var enabled = true
         var character: QuotaCharacter?
+        var onCare: ((PetCareAction) -> Void)?
+        var onOpenPet: (() -> Void)?
         override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
         override func hitTest(_ point: NSPoint) -> NSView? {
             guard let event = NSApp.currentEvent,
@@ -839,7 +993,8 @@ struct StandaloneBuddyContextMenu: NSViewRepresentable {
         override func mouseDown(with event: NSEvent) { if event.modifierFlags.contains(.control) { showPanel() } }
         private func showPanel() {
             guard let action else { return }
-            StandaloneSettingsPresenter.showInteractions(action: action, enabled: enabled, character: character, anchor: self, appearance: appearance)
+            StandaloneSettingsPresenter.showInteractions(action: action, enabled: enabled, character: character,
+                onCare: onCare, onOpenPet: onOpenPet, anchor: self, appearance: appearance)
         }
     }
     func makeNSView(context: Context) -> ContextView {
@@ -850,6 +1005,7 @@ struct StandaloneBuddyContextMenu: NSViewRepresentable {
     }
     func updateNSView(_ view: ContextView, context: Context) {
         view.action = action; view.enabled = enabled; view.character = character
+        view.onCare = onCare; view.onOpenPet = onOpenPet
         let name: NSAppearance.Name = colorScheme == .dark ? .darkAqua : .aqua
         if view.appearance?.name != name { view.appearance = NSAppearance(named: name) }
     }
@@ -1033,7 +1189,8 @@ struct StandalonePanelView: View {
             }.font(.system(size: 11)).foregroundStyle(.secondary).frame(height: model.compact ? 13 : 18)
             QuotaCard(document: model.document, now: model.now, compact: model.compact,
                       reaction: model.reaction, onPat: model.pat, animateChanges: model.animateQuota,
-                      activity: model.buddyActivity, onAction: model.play, minimal: true, slim: true)
+                      activity: model.buddyActivity, onAction: model.play, minimal: true, slim: true,
+                      petSkin: model.petProfile.skin, onCare: model.care, onOpenPet: { model.onShowPet?(surface) })
                 .id("\(presentation.provider.rawValue)/\(presentation.window?.id ?? "missing")")
                 .transition(.opacity)
                 .frame(height: model.compact ? 52 : 66)
@@ -1064,9 +1221,8 @@ struct StandalonePanelView: View {
             HStack(spacing: 4) {
                 feedbackFooter
                 Spacer(minLength: 2)
+                petLevelButton
                 if !model.compact {
-                Button(action: model.feed) { CookieBiscuit(bitten: false).frame(width: 14, height: 14).frame(width: 22, height: 22) }
-                    .disabled(model.isEatingUsage).help(YuliangL10n.text("喂一块饼干")).accessibilityLabel(YuliangL10n.text("喂一块饼干"))
                 StandaloneNativeMenuButton(model: model, surface: surface, kind: .interactions)
                     .frame(width: 22, height: 22)
                 Button { model.onChooseCharacter?(surface) } label: {
@@ -1076,6 +1232,20 @@ struct StandalonePanelView: View {
             }.font(.system(size: 12)).foregroundStyle(accent).frame(height: model.compact ? 18 : 22)
         }
         .padding(.horizontal, model.compact ? 12 : 14).padding(.vertical, model.compact ? 5 : 10)
+    }
+
+    private var petLevelButton: some View {
+        Button { model.onShowPet?(surface) } label: {
+            HStack(spacing: 3) {
+                Image(systemName: "heart.fill").font(.system(size: 8))
+                Text("Lv.\(model.petProfile.level)").font(.system(size: 9, weight: .semibold, design: .rounded)).monospacedDigit()
+            }
+            .fixedSize().frame(minHeight: model.compact || isDuo ? 16 : 22)
+            .contentShape(Rectangle())
+        }
+        .help(PetUI.text("伙伴成长与收藏", "Buddy care & collection", "仲間の成長とコレクション", language: model.language))
+        .accessibilityLabel(PetUI.text("打开伙伴成长", "Open buddy care", "仲間の成長を開く", language: model.language))
+        .accessibilityIdentifier("yuliang.pet.open")
     }
 
     private var feedbackFooter: some View {
@@ -1124,10 +1294,12 @@ struct StandalonePanelView: View {
                         WindowDragHandle(locked: model.positionLocked)
                             .help(model.positionLocked ? YuliangL10n.text("位置已锁定") : YuliangL10n.text("拖动小组件"))
                     }
+                petLevelButton.foregroundStyle(accent)
             }.foregroundStyle(.secondary).frame(height: 14)
             QuotaDuoGauge(document: model.document, now: model.now, reaction: model.reaction,
                           onPat: model.pat, animateChanges: model.animateQuota,
-                          activity: model.buddyActivity, onAction: model.play, size: 102)
+                          activity: model.buddyActivity, onAction: model.play, size: 102,
+                          petSkin: model.petProfile.skin, onCare: model.care, onOpenPet: { model.onShowPet?(surface) })
                 .frame(height: 102)
             HStack(spacing: 8) {
                 if presentation.provider == .claude {

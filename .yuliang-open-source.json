@@ -13,7 +13,7 @@
     },
     {
       "path": ".github/workflows/release.yml",
-      "sha256": "cd0e44c39520f8ebb91d39723538abb970dc1bcb6a976a21aa83cfd3e6f1dd9a"
+      "sha256": "fb81eccf95c5074fde08ad1c502a339ad1b30f05c50dfc1357a81860be716aac"
     },
     {
       "path": ".gitignore",
@@ -29,7 +29,7 @@
     },
     {
       "path": "apple/MacStandalone/CodexQuotaCollector.swift",
-      "sha256": "9723ed6d00a865066723c1c921d0521b9e7644a120257c3f6fedcc42a4fdb6f5"
+      "sha256": "e35a5126ed0ce5241a801cc002e7287327d480c8f46f7fa749868d6c56606c98"
     },
     {
       "path": "apple/MacStandalone/CodexTokenUsage.swift",
@@ -45,7 +45,7 @@
     },
     {
       "path": "apple/MacStandalone/Info.plist",
-      "sha256": "3918478c5aa776e1e00804dc824d1b05ed956e35fde649289e4e83c29fa1af49"
+      "sha256": "33a3fddd4413c1a6dc0c310fe5657f6cbb736c12118335cc964953731d34e1f1"
     },
     {
       "path": "apple/MacStandalone/QuotaWebCollector.swift",
@@ -53,7 +53,15 @@
     },
     {
       "path": "apple/MacStandalone/StandaloneDesktopShell.swift",
-      "sha256": "9f47499a0a943948cb7194690a9e08aaa4d34dc4c218fe961a623624c7f905df"
+      "sha256": "ea7d4abd2193911cb1af10a881368e647d98e0da35de8971e8ed430a55cee6d2"
+    },
+    {
+      "path": "apple/MacStandalone/StandalonePetStore.swift",
+      "sha256": "d0f33691ec6bfcfad66ebac2c85f73ad48f862b09af4846f26c847bdb4a09b75"
+    },
+    {
+      "path": "apple/MacStandalone/StandalonePetView.swift",
+      "sha256": "6546deeda22c4c4f4fcdd34e847f5a5fdd308624fba5864fb29141b7904f949e"
     },
     {
       "path": "apple/MacStandalone/StandalonePluginBridge.swift",
@@ -65,7 +73,7 @@
     },
     {
       "path": "apple/MacStandalone/YuliangStandaloneApp.swift",
-      "sha256": "26c1864e8a4feaec7330f47a2d2364517274f97b58f0cc71c9a92760506cb04b"
+      "sha256": "14c4316632d1c907c4b8a6068b65fbcd78f9e3d7bf5160405645e855916cbc49"
     },
     {
       "path": "apple/Package.swift",
@@ -85,7 +93,7 @@
     },
     {
       "path": "apple/scripts/build-standalone.mjs",
-      "sha256": "b583f8d51b9a656d1ea8be617ee5a43f5f3757a5cacd73b68f6e3b246a31a699"
+      "sha256": "cceecdab98305b93c1f09931cc991468290d9b753f19690c4586294939fa5806"
     },
     {
       "path": "apple/scripts/check-claude-collector.mjs",
@@ -101,11 +109,11 @@
     },
     {
       "path": "apple/scripts/check-desktop-shell.swift",
-      "sha256": "76f5b0dcd67ce25a2d91acae6cb4a4f8243cd45f24901bd8a9d5e53629bf2128"
+      "sha256": "7b7bc1c129a942b9a92bd78b67f8e1cb88c62fc5042e731193991f2b920b742f"
     },
     {
       "path": "apple/scripts/check-plugin-bridge.mjs",
-      "sha256": "b8e922de87e407007cb98c2d1674d4fbc6d95bbffddcc186ffacb70e47e3118c"
+      "sha256": "8631805493c0d6d63f40da84a789b2045e114ea2670959bef9db25eff2c079ef"
     },
     {
       "path": "apple/scripts/check-plugin-bridge.swift",
@@ -117,11 +125,11 @@
     },
     {
       "path": "apple/scripts/check-standalone-interactions.swift",
-      "sha256": "7fead196cb553d8389133e7f23c47cb9df7285d4d5bebf86f8027890ebd43559"
+      "sha256": "3fc74ef7b46c629cee5f1705807b805bd2913f7a322563f87eab81ceb70b56fc"
     },
     {
       "path": "apple/scripts/check-standalone-ui.mjs",
-      "sha256": "612ec01f69956f76a1bfde5edaa1743e87f058c92c1947c22a0acfd53e538eb5"
+      "sha256": "c70dca230dca61e57f1923cd83f2daec94846048f32fd668209dfaeb5becd984"
     },
     {
       "path": "apple/scripts/fixtures/fake-codex-app-server.mjs",
@@ -148,8 +156,12 @@
       "sha256": "68be7dba715be885e6eb82bae94a9c71d5754c554ba95fc362afcc88b07bf0a9"
     },
     {
+      "path": "apple/Shared/PetCareEffects.swift",
+      "sha256": "f8f6b6f3f85c21e02a5871861d38a9d3c4e8aa6c14f225f0355b6c62aef93a70"
+    },
+    {
       "path": "apple/Shared/QuotaCard.swift",
-      "sha256": "be1df1e5f982b945df6cda9bbaeb376dea501f8e2ffcc1e596578a1cd11331c6"
+      "sha256": "7fcdeb9d8a1531c8bdfac769647b8b18d9f160de683e4380c02f47498bc5f3dd"
     },
     {
       "path": "apple/Sources/QuotaCore/AppLanguage.swift",
@@ -166,6 +178,10 @@
     {
       "path": "apple/Sources/QuotaCore/BuddyInteraction.swift",
       "sha256": "1d58b429f710a990f6cd949a915d3de987be0d2843b569dcdacbab655065759d"
+    },
+    {
+      "path": "apple/Sources/QuotaCore/PetCompanion.swift",
+      "sha256": "94642a7d39d1a7ce19121b09d4c39fd7c0f93448cef590e2ce4617ee3028e252"
     },
     {
       "path": "apple/Sources/QuotaCore/QuotaCore.swift",
@@ -192,6 +208,10 @@
       "sha256": "d066fa8afa02bb4b0aa46b96c50393d81fa306f5a441e1241ce54b40583fba91"
     },
     {
+      "path": "apple/Tests/QuotaCoreTests/PetCompanionTests.swift",
+      "sha256": "4458ced3652aef1bee8e91cfeb9a8000c7909e858b6a099de6b6440c15302a5b"
+    },
+    {
       "path": "apple/Tests/QuotaCoreTests/QuotaCharacterTests.swift",
       "sha256": "f76f78e8e586204267dd3611eba61aa3f7f2127e7d5fbfa8563e3b2e2df4d348"
     },
@@ -209,7 +229,7 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "fd5f331f461f8059f31909b5d21cae45ca327dcc6560a46a71067412e0040dcf"
+      "sha256": "1daee132ae7e16b0af52f877130a91c057ca1d395855a3563ba307dc55d9dd5b"
     },
     {
       "path": "CONTRIBUTING.md",
@@ -269,7 +289,7 @@
     },
     {
       "path": "package.json",
-      "sha256": "f23e071257c90df0ace1f99c81b40a36a3e3232001ac6b93c4458b5ba5678bb1"
+      "sha256": "7c6169880ced053a6381b854fe18aa34ef704d87fc704e5f6f7347d966a3b50a"
     },
     {
       "path": "plugins/yuliang/.codex-plugin/plugin.json",
@@ -325,11 +345,11 @@
     },
     {
       "path": "README.en.md",
-      "sha256": "1a2fa08c167d51c06f6adb204c99874fd2b6b624c7c35a975c49a675b84de81c"
+      "sha256": "9cdc741142a8e26c5e65446bd5eee9f61c34fc0564f28fbab57ac94d527af86a"
     },
     {
       "path": "README.md",
-      "sha256": "681b3511ed7e209b277c395fa05988c2472158bca22ea1ec2619413b57163864"
+      "sha256": "92d0a5e9af9363431da99aa26a0cf213ce39f34d1cec827f66e218a884787020"
     },
     {
       "path": "RELEASE-v0.17.0.md",
@@ -338,6 +358,10 @@
     {
       "path": "RELEASE-v0.17.1.md",
       "sha256": "1f41d349f3665212c3bb7d8dc1148bd7fa81dfdd902aa877afaa4d4ea730625b"
+    },
+    {
+      "path": "RELEASE-v0.18.0.md",
+      "sha256": "fb2a1f8bf4d171e42f2e3980fccbcb07423ddf2eadeaa2a562028092f264064e"
     },
     {
       "path": "scripts/package-plugin.mjs",

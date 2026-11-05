@@ -81,8 +81,10 @@ struct BuddyActivity: Equatable {
     let startedAt: Date
     let source: BuddyActivitySource
     var consumedPercent: Double? = nil
+    var petCare: PetCareAction? = nil
     var duration: TimeInterval { action.duration }
     var caption: String {
+        if let petCare { return petCare.caption(language: YuliangL10n.language) }
         switch action {
         case .idle: return "等你一起开工"
         case .eating:
@@ -289,13 +291,17 @@ struct QuotaCard: View {
     var onAction: ((BuddyAction) -> Void)? = nil
     var minimal = false
     var slim = false
+    var petSkin: PetEvolutionSkin = .natural
+    var onCare: ((PetCareAction) -> Void)? = nil
+    var onOpenPet: (() -> Void)? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
         let value = QuotaPresentation(document: document, now: now)
         QuotaCardContent(document: document, now: now, compact: compact, minimal: minimal, slim: slim, reaction: reaction,
-                         resourceBundle: resourceBundle, onPat: onPat, widgetInteraction: widgetInteraction,
+                         resourceBundle: resourceBundle, onPat: onPat, widgetInteraction: widgetInteraction, petSkin: petSkin,
                          progress: value.remainingPercent ?? 0, isKnown: value.remainingPercent != nil,
-                         activity: activity, activityPreviewElapsed: activityPreviewElapsed, onAction: onAction)
+                         activity: activity, activityPreviewElapsed: activityPreviewElapsed, onAction: onAction,
+                         onCare: onCare, onOpenPet: onOpenPet)
             .animation(animateChanges && !reduceMotion && value.freshness == .fresh ? .easeInOut(duration: 0.8) : nil,
                        value: value.remainingPercent)
             .id("\(value.provider.rawValue)/\(value.window?.id ?? "missing")/\(value.remainingPercent != nil)/\(value.freshness)")
@@ -313,11 +319,14 @@ private struct QuotaCardContent: View, Animatable {
     let resourceBundle: Bundle
     let onPat: (() -> Void)?
     let widgetInteraction: Bool
+    let petSkin: PetEvolutionSkin
     var progress: Double
     let isKnown: Bool
     let activity: BuddyActivity?
     let activityPreviewElapsed: TimeInterval?
     let onAction: ((BuddyAction) -> Void)?
+    let onCare: ((PetCareAction) -> Void)?
+    let onOpenPet: (() -> Void)?
     var animatableData: Double {
         get { progress }
         set { progress = newValue }
@@ -407,7 +416,8 @@ private struct QuotaCardContent: View, Animatable {
             QuotaRail(remainingPercent: remaining, character: document.preferences.character, frame: frame,
                       accent: accent, size: slim ? (compact ? 28 : 36) : compact ? 48 : 56, resourceBundle: resourceBundle,
                       onPat: onPat, widgetInteraction: widgetInteraction, activity: activity, activityPreviewElapsed: activityPreviewElapsed,
-                      onAction: onAction, trackHeight: slim ? (compact ? 10 : 12) : nil)
+                      onAction: onAction, trackHeight: slim ? (compact ? 10 : 12) : nil, petSkin: petSkin,
+                      onCare: onCare, onOpenPet: onOpenPet)
                 .frame(height: slim ? (compact ? 28 : 36) : compact ? 48 : 56)
             if !minimal && !compact { Text(YuliangL10n.text(title)).font(.system(size: 12, weight: .medium)).lineLimit(1) }
             if !minimal { HStack(alignment: .firstTextBaseline) {
@@ -457,6 +467,9 @@ struct QuotaRail: View {
     var activityPreviewElapsed: TimeInterval?
     var onAction: ((BuddyAction) -> Void)?
     var trackHeight: CGFloat?
+    var petSkin: PetEvolutionSkin
+    var onCare: ((PetCareAction) -> Void)?
+    var onOpenPet: (() -> Void)?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
     // The explicit wrapper alias also works with Command Line Tools whose SDK
@@ -467,7 +480,8 @@ struct QuotaRail: View {
     init(remainingPercent: Double?, character: QuotaCharacter, frame: Int, accent: Color,
          size: CGFloat, resourceBundle: Bundle = .main, onPat: (() -> Void)? = nil,
          widgetInteraction: Bool = false, activity: BuddyActivity? = nil, activityPreviewElapsed: TimeInterval? = nil,
-         onAction: ((BuddyAction) -> Void)? = nil, trackHeight: CGFloat? = nil) {
+         onAction: ((BuddyAction) -> Void)? = nil, trackHeight: CGFloat? = nil, petSkin: PetEvolutionSkin = .natural,
+         onCare: ((PetCareAction) -> Void)? = nil, onOpenPet: (() -> Void)? = nil) {
         let valid = remainingPercent.map { $0.isFinite && (0...100).contains($0) } ?? false
         self.progress = valid ? remainingPercent! : 0
         self.isKnown = valid
@@ -476,6 +490,8 @@ struct QuotaRail: View {
         self.onPat = onPat; self.widgetInteraction = widgetInteraction
         self.activity = activity; self.activityPreviewElapsed = activityPreviewElapsed; self.onAction = onAction
         self.trackHeight = trackHeight
+        self.petSkin = petSkin
+        self.onCare = onCare; self.onOpenPet = onOpenPet
     }
     private var motion: BuddyMotionProfile {
         BuddyMotionProfile(character: character, illustrated: character.illustrationRow != nil
@@ -623,7 +639,14 @@ struct QuotaRail: View {
                 .scaleEffect(x: transform.scaleX, y: transform.scaleY, anchor: activity.action == .jump ? .bottom : .center)
                 .offset(x: transform.x, y: transform.y)
             if active {
-                if eating {
+                if let care = activity.petCare {
+                    PetCarePropEffect(action: care, progress: t, size: size, accent: accent,
+                                      reduceMotion: reduceMotion)
+                    if care == .explore {
+                        BuddySignatureFlourish(effect: character.signatureEffect, accent: accent,
+                                               progress: t, size: size, reduceMotion: reduceMotion)
+                    }
+                } else if eating {
                     feedingBiscuit(elapsed: elapsed, duration: activity.duration, size: size)
                 } else {
                     actionFeedback(activity.action, progress: t, size: size)
@@ -735,7 +758,7 @@ struct QuotaRail: View {
                     StandaloneBuddyContextMenu(action: onAction,
                         enabled: activity.map { !($0.action == .eating && $0.source == .usage
                             && Date().timeIntervalSince($0.startedAt) < $0.duration) } ?? true,
-                        character: character)
+                        character: character, onCare: onCare, onOpenPet: onOpenPet)
                         .accessibilityHidden(true)
                 }
             }
@@ -756,23 +779,27 @@ struct QuotaRail: View {
     @ViewBuilder private func interactiveBuddy(size: Double, spriteFrame: Int?) -> some View {
         if widgetInteraction {
             #if YULIANG_STANDALONE
-            BuddySprite(character: character, frame: spriteFrame ?? frame, size: size, resourceBundle: resourceBundle)
+            decoratedSprite(size: size, spriteFrame: spriteFrame)
             #else
             Button(intent: PatQuotaBuddyIntent()) {
-                BuddySprite(character: character, frame: spriteFrame ?? frame, size: size, resourceBundle: resourceBundle)
+                decoratedSprite(size: size, spriteFrame: spriteFrame)
             }.buttonStyle(.plain).accessibilityLabel(YuliangL10n.format("摸摸{0}", YuliangL10n.text(character.name)))
             #endif
         } else if let onPat {
             Button(action: onPat) {
-                BuddySprite(character: character, frame: spriteFrame ?? frame, size: size, resourceBundle: resourceBundle)
+                decoratedSprite(size: size, spriteFrame: spriteFrame)
             }.buttonStyle(.plain).accessibilityLabel(YuliangL10n.format("和{0}互动", YuliangL10n.text(character.name)))
         } else if let onAction {
             Button { onAction(.pat) } label: {
-                BuddySprite(character: character, frame: spriteFrame ?? frame, size: size, resourceBundle: resourceBundle)
+                decoratedSprite(size: size, spriteFrame: spriteFrame)
             }.buttonStyle(.plain).accessibilityLabel(YuliangL10n.format("摸摸{0}", YuliangL10n.text(character.name)))
         } else {
-            BuddySprite(character: character, frame: spriteFrame ?? frame, size: size, resourceBundle: resourceBundle)
+            decoratedSprite(size: size, spriteFrame: spriteFrame)
         }
+    }
+    private func decoratedSprite(size: Double, spriteFrame: Int?) -> some View {
+        BuddySprite(character: character, frame: spriteFrame ?? frame, size: size, resourceBundle: resourceBundle)
+            .overlay { PetEvolutionAdornment(skin: petSkin, accent: accent, size: size) }
     }
 }
 
@@ -913,6 +940,9 @@ struct QuotaDuoGauge: View {
     var activityPreviewElapsed: TimeInterval? = nil
     var onAction: ((BuddyAction) -> Void)? = nil
     var size: CGFloat = 102
+    var petSkin: PetEvolutionSkin = .natural
+    var onCare: ((PetCareAction) -> Void)? = nil
+    var onOpenPet: (() -> Void)? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -921,7 +951,7 @@ struct QuotaDuoGauge: View {
                              resourceBundle: resourceBundle, onPat: onPat,
                              progress: value.remainingPercent ?? 0, isKnown: value.remainingPercent != nil,
                              activity: activity, activityPreviewElapsed: activityPreviewElapsed,
-                             onAction: onAction, size: size)
+                             onAction: onAction, size: size, petSkin: petSkin, onCare: onCare, onOpenPet: onOpenPet)
             .animation(animateChanges && !reduceMotion && value.freshness == .fresh ? .easeInOut(duration: 0.8) : nil,
                        value: value.remainingPercent)
             .id("duo/\(value.provider.rawValue)/\(value.window?.id ?? "missing")/\(value.remainingPercent != nil)/\(value.freshness)")
@@ -940,6 +970,9 @@ private struct QuotaDuoGaugeContent: View, Animatable {
     let activityPreviewElapsed: TimeInterval?
     let onAction: ((BuddyAction) -> Void)?
     let size: CGFloat
+    let petSkin: PetEvolutionSkin
+    let onCare: ((PetCareAction) -> Void)?
+    let onOpenPet: (() -> Void)?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
 
@@ -980,7 +1013,8 @@ private struct QuotaDuoGaugeContent: View, Animatable {
         QuotaRail(remainingPercent: layout.isKnown ? layout.progress : nil,
                   character: document.preferences.character, frame: frame, accent: accent,
                   size: layout.avatarSize, resourceBundle: resourceBundle, onPat: onPat,
-                  activity: activity, activityPreviewElapsed: activityPreviewElapsed, onAction: onAction)
+                  activity: activity, activityPreviewElapsed: activityPreviewElapsed, onAction: onAction, petSkin: petSkin,
+                  onCare: onCare, onOpenPet: onOpenPet)
     }
 
     var body: some View {

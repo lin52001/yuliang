@@ -55,9 +55,9 @@ try {
   const core = (await readdir(path.join(apple, 'Sources/QuotaCore'))).filter(name => name.endsWith('.swift')).sort().map(name => `Sources/QuotaCore/${name}`);
   run('xcrun', [...base, '-parse-as-library', '-emit-module', '-emit-library', '-static', '-module-name', 'QuotaCore', ...core,
     '-emit-module-path', path.join(scratch, 'QuotaCore.swiftmodule'), '-o', path.join(scratch, 'libQuotaCore.a')]);
-  const app = ['CodexTokenUsage.swift', 'CodexQuotaCollector.swift', 'QuotaWebCollector.swift', 'ClaudeConnectionView.swift', 'StandaloneQuotaStore.swift', 'StandalonePluginBridge.swift', 'YuliangStandaloneApp.swift', 'StandaloneDesktopShell.swift'].map(name => `MacStandalone/${name}`);
+  const app = ['CodexTokenUsage.swift', 'CodexQuotaCollector.swift', 'QuotaWebCollector.swift', 'ClaudeConnectionView.swift', 'StandaloneQuotaStore.swift', 'StandalonePetStore.swift', 'StandalonePetView.swift', 'StandalonePluginBridge.swift', 'YuliangStandaloneApp.swift', 'StandaloneDesktopShell.swift'].map(name => `MacStandalone/${name}`);
   run('xcrun', [...base, '-parse-as-library', '-D', 'YULIANG_STANDALONE', '-I', scratch, '-L', scratch, '-lQuotaCore',
-    'Shared/OriginalBuddy.swift', 'Shared/QuotaCard.swift', ...app, '-o', path.join(contents, 'MacOS/YuliangStandalone')]);
+    'Shared/OriginalBuddy.swift', 'Shared/PetCareEffects.swift', 'Shared/QuotaCard.swift', ...app, '-o', path.join(contents, 'MacOS/YuliangStandalone')]);
   const resources = [
     copyFile(path.join(apple, 'MacStandalone/Info.plist'), path.join(contents, 'Info.plist')),
     ...visualResources.map(name => copyFile(path.join(apple, 'Resources', name), path.join(contents, 'Resources', name))),
